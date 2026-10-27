@@ -434,11 +434,16 @@ async function viewAnalytics() {
     const d = r.j, ST = S.cat.statusFa, kt = Object.fromEntries(d.kpis.map(k => [k.code, k.title]));
     const rows = d.rows.map(x => ({ ...x, v: x.kpi[st.kpi] })).sort((a, b) => (b.v ?? -1) - (a.v ?? -1));
     const unitName = (S.units.find(u => u.id === st.unit) || {}).name || d.unit.name;
-    box.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h1', {}, 'تحلیل و شاخص‌ها — ', unitName), h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => { if (d.unit.parent_id) { st.unit = d.unit.parent_id; load(); } } } }, '↑ بالاتر'), periodSel(() => renderShell()))),
+    box.append(h('div', { class: 'card' },
+      h('div', { class: 'row sp' },
+        h('h1', {}, 'تحلیل و شاخص‌ها — ', unitName),
+        h('div', { class: 'row' },
+          h('button', { class: 'b sec sm', on: { click: () => { if (d.unit.parent_id) { st.unit = d.unit.parent_id; load(); } } } }, '↑ بالاتر'),
+          periodSel(() => renderShell()))),
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: st.only, on: { change: (e) => { st.only = e.target.checked; load(); } } }), 'فقط تأییدشده‌ها'),
-      h('div', { class: 'row' }, S.cat.kpis.map(k => h('button', { class: 'pill' + (k === st.kpi ? ' on' : ''), on: { click: () => { st.kpi = k; load(); } } }, kt[k]))));
+      h('div', { class: 'row' }, S.cat.kpis.map(function (k) { return h('button', { class: 'pill' + (k === st.kpi ? ' on' : ''), on: { click: function () { st.kpi = k; load(); } } }, kt[k]); }))));
     // KPI summary
-    box.append(h('div', { class: 'card' }, h('h2', {}, 'شاخص کل واحد'), h('div', { class: 'kpis' }, d.kpis.map(k => h('div', { class: 'kpi' }, h('b', {}, d.total[k.code] === null ? '—' : fa(d.total[k.code]) + '٪'), h('span', {}, k.title)))));
+    box.append(h('div', { class: 'card' }, h('h2', {}, 'شاخص کل واحد'), h('div', { class: 'kpis' }, d.kpis.map(function (k) { return h('div', { class: 'kpi' }, h('b', {}, d.total[k.code] === null ? '—' : fa(d.total[k.code]) + '٪'), h('span', {}, k.title)); }))));
     // Ranking table
     const tbl = h('table', { class: 'tbl' }, h('tr', {}, h('th', {}, 'رتبه'), h('th', {}, 'واحد'), h('th', {}, 'وضعیت'), h('th', {}, kt[st.kpi]), h('th', {}, 'نقاط قوت/ضعف')));
     rows.forEach((x, i) => {
