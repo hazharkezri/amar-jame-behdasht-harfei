@@ -15,6 +15,9 @@ const DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS || 'ac.ir,gov.ir').split(',')
 const IDLE = 30 * 60e3, ABS = 12 * 3600e3;
 const NEXT = { country: 'university', university: 'county', county: 'center', center: 'base', base: 'house' };
 const TYPE_FA = { country: 'ستاد کشوری', university: 'دانشگاه علوم پزشکی', county: 'شهرستان / مرکز بهداشت', center: 'مرکز خدمات جامع سلامت', base: 'پایگاه سلامت', house: 'خانه‌ی بهداشت' };
+const ROLE_FA = { expert_ohs: 'کارشناس بهداشت حرفه‌ای', behvarz: 'بهورز', expert_ehs: 'کارشناس بهداشت محیط', responsible_ohs: 'کارشناس مسئول بهداشت حرفه‌ای', manager_ohs: 'مدیر گروه بهداشت حرفه‌ای' };
+const MANAGER_ROLES = new Set(['responsible_ohs', 'manager_ohs']);
+const isManagerRole = (r) => MANAGER_ROLES.has(r);
 const STATUS_FA = { draft: 'پیش‌نویس', submitted: 'ارسال‌شده — منتظر تأیید', approved: 'تأییدشده (قفل)', returned: 'برگشت‌خورده برای اصلاح' };
 const KPIS = ['PCT-B', 'PCT-C', 'PCT-D', 'PCT-E', 'PCT-F', 'PCT-H'];
 const TABLES = Object.fromEntries(TAB.tables.map(t => [t.key, t]));
@@ -50,16 +53,16 @@ const unitOf = (id) => db.prepare('SELECT * FROM units WHERE id=?').get(id);
 const isRoot = (u) => !!u && u.parent_id === null;
 const scopeOf = (u) => subtreeIds(u.unit_id);
 const inScope = (u, unitId) => scopeOf(u).includes(+unitId);
-const isRootMgr = (u) => u.role === 'manager' && isRoot(unitOf(u.unit_id));
+const isRootMgr = (u) => isManagerRole(u.role) && isRoot(unitOf(u.unit_id));
 const publicUser = (u) => ({ id: u.id, full_name: u.full_name, role: u.role, unit_id: u.unit_id, unit: unitOf(u.unit_id), nid_last4: u.nid_last4, status: u.status });
 function canManage(actor, unitId, role) {
-  if (actor.role !== 'manager' || !inScope(actor, unitId)) return false;
-  if (role === 'manager' && +unitId === actor.unit_id && !isRoot(unitOf(actor.unit_id))) return false;
+  if (!isManagerRole(actor.role) || !inScope(actor, unitId)) return false;
+  if (isManagerRole(role) && +unitId === actor.unit_id && !isRoot(unitOf(actor.unit_id))) return false;
   return true;
 }
 // آیا مسئول actor می‌تواند ارسال واحد unitId را تأیید یا برگشت دهد؟
 function canDecide(actor, unitId) {
-  if (actor.role !== 'manager' || !inScope(actor, unitId)) return false;
+  if (!isManagerRole(actor.role) || !inScope(actor, unitId)) return false;
   return +unitId !== actor.unit_id || isRoot(unitOf(actor.unit_id));
 }
 const getSub = (per, unit) => db.prepare('SELECT * FROM submissions WHERE period_id=? AND unit_id=?').get(per, unit) || { period_id: per, unit_id: unit, status: 'draft' };
@@ -108,7 +111,7 @@ R('GET', '/api/health', (c) => send(c.res, 200, { ok: true, ts: Date.now() }), {
 R('GET', '/api/catalog', (c) => send(c.res, 200, {
   layout: CAT.layout, indicators: CAT.indicators.map(i => ({ id: i.id, title: i.title, kind: i.kind, blk: i.blk })),
   report: REP.map(r => ({ code: r.code, title: r.title, section: r.section, pct: r.pct })), rules: RULES,
-  tables: TAB.tables.map(t => ({ key: t.key, title: t.title, cols: t.cols })), typeFa: TYPE_FA, statusFa: STATUS_FA, kpis: KPIS
+  tables: TAB.tables.map(t => ({ key: t.key, title: t.title, cols: t.cols })), typeFa: TYPE_FA, roleFa: ROLE_FA, statusFa: STATUS_FA, kpis: KPIS
 }), { auth: false });
 R('GET', '/api/me', (c) => send(c.res, 200, { user: publicUser(c.u), csrf: c.s.csrf }));
 
@@ -228,7 +231,7 @@ R('DELETE', '/api/units/:id', (c) => {
 
 // --- فهرست مجاز، کاربران، بارگذاری گروهی
 R('GET', '/api/allow', (c) => {
-  if (c.u.role !== 'manager') return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = scopeOf(c.u); send(c.res, 200, db.prepare(`SELECT id,nid_last4,unit_id,role,note,used FROM allow WHERE unit_id IN (${inList(ids)}) ORDER BY id DESC`).all(...ids));
 });
 function addAllow(actor, nidRaw, unit, role, note) {
@@ -238,8 +241,9 @@ function addAllow(actor, nidRaw, unit, role, note) {
   catch (e) { return 'این کد ملی قبلاً در فهرست مجاز ثبت شده است'; }
 }
 R('POST', '/api/allow', (c) => {
-  const err = addAllow(c.u, c.b.nid, +c.b.unit_id, c.b.role === 'manager' ? 'manager' : 'expert', c.b.note);
-  if (err) return fail(c.res, 400, err); audit(c.u.id, 'allow_add', { unit: +c.b.unit_id }, c.ip); send(c.res, 200, { ok: true });
+  const role = MANAGER_ROLES.has(c.b.role) ? c.b.role : (['expert_ohs','behvarz','expert_ehs','responsible_ohs','manager_ohs'].includes(c.b.role) ? c.b.role : 'expert_ohs');
+  const err = addAllow(c.u, c.b.nid, +c.b.unit_id, role, c.b.note);
+  if (err) return fail(c.res, 400, err); audit(c.u.id, 'allow_add', { unit: +c.b.unit_id, role }, c.ip); send(c.res, 200, { ok: true });
 });
 function parseTable(b) {
   if (b.csv) {
@@ -251,7 +255,7 @@ function parseTable(b) {
   return s.rows.filter(Boolean).map(r => Array.from(r, v => v == null ? '' : String(v)));
 }
 R('POST', '/api/allow/bulk', (c) => {
-  if (c.u.role !== 'manager') return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   let rows; try { rows = parseTable(c.b); } catch (e) { return fail(c.res, 400, e.message || 'فایل قابل خواندن نیست.'); }
   if (rows.length && !L.validNid(rows[0][0]) && /کد|ملی|نام|واحد/.test(rows[0].join(' '))) rows.shift();       // سطر عنوان
   if (rows.length > 5000) return fail(c.res, 400, 'حداکثر ۵۰۰۰ ردیف در هر بار.');
@@ -260,11 +264,18 @@ R('POST', '/api/allow/bulk', (c) => {
   const ok = [], errors = [];
   rows.forEach((r, i) => {
     const [nid, name, unitName, roleTxt] = r, row = i + 1;
+    if (!name || !String(name).trim()) return errors.push({ row, msg: 'نام و نام خانوادگی الزامی است' });
     const key = L.norm(unitName || '').replace(/^(شهرستان|مرکز بهداشت|مرکز|دانشگاه)\s+/, '');
     let cand = byName.get(L.norm(unitName || '')) || byName.get(key) || [];
     if (!cand.length) cand = [...byName].filter(([k]) => k.replace(/^(شهرستان|مرکز بهداشت|مرکز|دانشگاه)\s+/, '') === key).flatMap(([, v]) => v);
     if (cand.length !== 1) return errors.push({ row, msg: cand.length ? 'نام واحد مبهم است' : 'واحد پیدا نشد: ' + (unitName || '(خالی)') });
-    const role = /مسئول|مدیر|رئیس|رییس|manager/i.test(roleTxt || '') ? 'manager' : 'expert';
+    let role = 'expert_ohs';
+const t = (roleTxt || '').trim();
+if (/مدیر\s*گروه/i.test(t)) role = 'manager_ohs';
+else if (/کارشناس\s*مسئول/i.test(t) || /\u0645\u0633\u0626\u0648\u0644/i.test(t)) role = 'responsible_ohs';
+else if (/بهورز/i.test(t)) role = 'behvarz';
+else if (/محیط/i.test(t)) role = 'expert_ehs';
+else if (/حرفه/i.test(t)) role = 'expert_ohs';
     const n = L.validNid(nid); if (!n) return errors.push({ row, msg: 'کد ملی نامعتبر' });
     if (!canManage(c.u, cand[0].id, role)) return errors.push({ row, msg: 'اجازه‌ی ثبت برای این واحد/نقش را ندارید' });
     ok.push({ n, unit: cand[0].id, role, note: name || '' });
@@ -288,7 +299,7 @@ R('DELETE', '/api/allow/:id', (c) => {
   db.prepare('DELETE FROM allow WHERE id=?').run(a.id); audit(c.u.id, 'allow_del', { id: a.id }, c.ip); send(c.res, 200, { ok: true });
 });
 R('GET', '/api/users', (c) => {
-  if (c.u.role !== 'manager') return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = scopeOf(c.u);
   const rows = db.prepare(`SELECT * FROM users WHERE unit_id IN (${inList(ids)}) ORDER BY status,id DESC`).all(...ids).filter(u => u.id !== c.u.id && canManage(c.u, u.unit_id, u.role));
   send(c.res, 200, rows.map(u => ({ ...publicUser(u), email: u.email, phone: u.phone, totp_ok: !!u.totp_ok, last_login: u.last_login, nid: u.status === 'pending' ? L.dec(u.nid_enc) : undefined, unit_name: unitOf(u.unit_id).name })));
@@ -345,20 +356,20 @@ R('DELETE', '/api/periods/:id', (c) => {
 // --- ورود آمار
 R('GET', '/api/entries', (c) => {
   const unit = +c.q.unit || c.u.unit_id, per = +c.q.period;
-  if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   send(c.res, 200, { values: entriesOf(per, unit), submission: getSub(per, unit) });
 });
 R('PUT', '/api/entries', (c) => {
-  const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   const e = applyEntry(c.u, c.b.period, String(c.b.ind || ''), c.b.value, unit); if (e) return fail(c.res, 400, e); send(c.res, 200, { ok: true });
 });
 R('POST', '/api/entries/batch', (c) => {          // برای ارسال صف آفلاین
   const items = Array.isArray(c.b.items) ? c.b.items.slice(0, 500) : [], res = [];
-  for (const it of items) { const unit = +it.unit || c.u.unit_id; if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) { res.push('اجازه ندارید.'); continue; } res.push(applyEntry(c.u, it.period, String(it.ind || ''), it.value, unit)); }
+  for (const it of items) { const unit = +it.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) { res.push('اجازه ندارید.'); continue; } res.push(applyEntry(c.u, it.period, String(it.ind || ''), it.value, unit)); }
   send(c.res, 200, { results: res.map(e => e || null) });
 });
 R('GET', '/api/history', (c) => {
-  const unit = +c.q.unit || c.u.unit_id; if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  const unit = +c.q.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   send(c.res, 200, db.prepare('SELECT h.old,h.new,h.ts,u.full_name FROM entry_history h LEFT JOIN users u ON u.id=h.by_user WHERE h.period_id=? AND h.unit_id=? AND h.ind_id=? ORDER BY h.id DESC LIMIT 50').all(+c.q.period, unit, String(c.q.ind || '')));
 });
 R('GET', '/api/profile', (c) => {
@@ -379,7 +390,7 @@ R('POST', '/api/profile', (c) => {
 R('POST', '/api/submit', (c) => {
   const per = db.prepare('SELECT * FROM periods WHERE id=?').get(+c.b.period), unit = +c.b.unit || c.u.unit_id;
   if (!per || per.status !== 'open') return fail(c.res, 400, 'این دوره بسته است.');
-  if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   if (!editable(per.id, unit)) return fail(c.res, 400, 'اطلاعات قبلاً ارسال شده است.');
   const vals = numVals(per.id, unit);
   if (!Object.values(vals).some(v => v > 0)) return fail(c.res, 400, 'هنوز هیچ آماری ثبت نشده است.');
@@ -390,12 +401,12 @@ R('POST', '/api/submit', (c) => {
   audit(c.u.id, 'submit', { period: per.id, unit, warnings: w.length }, c.ip); send(c.res, 200, { ok: true });
 });
 R('POST', '/api/submit/withdraw', (c) => {
-  const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   const s = getSub(+c.b.period, unit); if (s.status !== 'submitted') return fail(c.res, 400, 'فقط ارسال‌های منتظر تأیید قابل پس‌گرفتن هستند.');
   db.prepare("UPDATE submissions SET status='draft' WHERE period_id=? AND unit_id=?").run(s.period_id, s.unit_id); audit(c.u.id, 'withdraw', { period: s.period_id, unit }, c.ip); send(c.res, 200, { ok: true });
 });
 R('GET', '/api/approvals', (c) => {
-  if (c.u.role !== 'manager') return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const per = +c.q.period, ids = scopeOf(c.u).filter(i => canDecide(c.u, i));
   if (!ids.length) return send(c.res, 200, []);
   const out = db.prepare(`SELECT u.id unit_id,u.name,u.type,COALESCE(s.status,'draft') status,s.submitted_at,s.decided_at,s.note,(SELECT COUNT(*) FROM entries e WHERE e.period_id=? AND e.unit_id=u.id) filled
@@ -418,7 +429,7 @@ R('GET', '/api/inbox', (c) => {
   const o = { returned: 0, pendingApprovals: 0, pendingUsers: 0, note: null };
   const per = (db.prepare("SELECT id FROM periods WHERE status='open' ORDER BY id DESC LIMIT 1").get() || {}).id;
   if (per) { const s = getSub(per, c.u.unit_id); o.status = s.status; if (s.status === 'returned') { o.returned = 1; o.note = s.note; } o.period = per; }
-  if (c.u.role === 'manager') {
+  if (isManagerRole(c.u.role)) {
     if (per) { const ids = scopeOf(c.u).filter(i => canDecide(c.u, i)); if (ids.length) o.pendingApprovals = db.prepare(`SELECT COUNT(*) n FROM submissions WHERE period_id=? AND status='submitted' AND unit_id IN (${inList(ids)})`).get(per, ...ids).n; }
     const ids = scopeOf(c.u); o.pendingUsers = db.prepare(`SELECT COUNT(*) n FROM users WHERE status='pending' AND totp_ok=1 AND unit_id IN (${inList(ids)})`).get(...ids).n;
   }
@@ -427,19 +438,19 @@ R('GET', '/api/inbox', (c) => {
 // --- گزارش، داشبورد و خروجی
 function matrix(c) {
   const unit = +c.q.unit || c.u.unit_id, per = +c.q.period, only = c.q.approved === '1';
-  if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return null;
+  if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return null;
   const kids = db.prepare('SELECT id,name,type FROM units WHERE parent_id=? ORDER BY id').all(unit);
   const cols = [{ id: unit, name: unitOf(unit).name + ' (جمع)', total: true }, ...kids.map(k => ({ id: k.id, name: k.name, status: getSub(per, k.id).status }))];
   return { unit, per, cols, data: cols.map(col => { const s = sums(per, col.id, only); return { s, r: computeReport(s) }; }) };
 }
 R('GET', '/api/rollup', (c) => { const m = matrix(c); if (!m) return fail(c.res, 403, 'اجازه ندارید.'); send(c.res, 200, { cols: m.cols, sums: m.data.map(d => d.s), report: m.data.map(d => d.r) }); });
 R('GET', '/api/progress', (c) => {
-  if (c.u.role === 'expert') return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const per = +c.q.period, ids = scopeOf(c.u);
   send(c.res, 200, db.prepare(`SELECT unit_id, COUNT(*) n, MAX(updated_at) last FROM entries WHERE period_id=? AND unit_id IN (${inList(ids)}) GROUP BY unit_id`).all(per, ...ids));
 });
 R('GET', '/api/dashboard', (c) => {
-  if (c.u.role === 'expert') return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const unit = +c.q.unit || c.u.unit_id, per = +c.q.period; if (!inScope(c.u, unit)) return fail(c.res, 403, 'اجازه ندارید.');
   const only = c.q.approved === '1', kids = db.prepare('SELECT id,name FROM units WHERE parent_id=? ORDER BY id').all(unit);
   const pick = (r) => Object.fromEntries(KPIS.map(k => [k, r[k]]));
@@ -486,7 +497,7 @@ R('POST', '/api/import/entries', (c) => {
   const byUnit = new Map(); for (const t of todo) { if (!byUnit.has(t.u.id)) byUnit.set(t.u.id, []); byUnit.get(t.u.id).push(t); }
   for (const [uid, items] of byUnit) {
     const u = units.find(x => x.id === uid);
-    if (c.u.role === 'expert' && uid !== c.u.unit_id) { report.errors.push(`${u.name}: شما فقط برای واحد خودتان می‌توانید درون‌ریزی کنید`); continue; }
+    if (!isManagerRole(c.u.role) && uid !== c.u.unit_id) { report.errors.push(`${u.name}: شما فقط برای واحد خودتان می‌توانید درون‌ریزی کنید`); continue; }
     if (!editable(per.id, uid)) { report.errors.push(`${u.name}: قفل است (ارسال/تأیید شده)`); continue; }
     report.units[u.name] = items.length;
     if (c.b.dry) continue;
@@ -511,14 +522,14 @@ function cleanRec(t, data) {
 }
 R('GET', '/api/records', (c) => {
   const t = TABLES[c.q.table]; if (!t) return fail(c.res, 400, 'جدول نامعتبر.');
-  const unit = +c.q.unit || c.u.unit_id; if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  const unit = +c.q.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = subtreeIds(unit), q = str(c.q.q, 60), off = Math.max(0, +c.q.offset || 0);
   const where = `table_key=? AND unit_id IN (${inList(ids)})` + (q ? ' AND data LIKE ?' : ''), args = [t.key, ...ids, ...(q ? ['%' + q.replace(/[%_]/g, '') + '%'] : [])];
   const total = db.prepare(`SELECT COUNT(*) n FROM records WHERE ${where}`).get(...args).n;
   const rows = db.prepare(`SELECT r.id,r.unit_id,r.data,r.updated_at,u.name unit_name FROM records r JOIN units u ON u.id=r.unit_id WHERE ${where.replace(/table_key/, 'r.table_key').replace(/unit_id IN/, 'r.unit_id IN')} ORDER BY r.id DESC LIMIT 100 OFFSET ${off}`).all(...args);
   send(c.res, 200, { total, rows: rows.map(r => ({ ...r, data: JSON.parse(r.data) })) });
 });
-const recUnit = (c, t) => { const u = +c.b.unit_id || c.u.unit_id; if (!inScope(c.u, u) || (c.u.role === 'expert' && u !== c.u.unit_id)) return null; return u; };
+const recUnit = (c, t) => { const u = +c.b.unit_id || c.u.unit_id; if (!inScope(c.u, u) || (!isManagerRole(c.u.role) && u !== c.u.unit_id)) return null; return u; };
 R('POST', '/api/records', (c) => {
   const t = TABLES[c.b.table]; if (!t) return fail(c.res, 400, 'جدول نامعتبر.'); const unit = recUnit(c, t); if (!unit) return fail(c.res, 403, 'اجازه ندارید.');
   let d; try { d = cleanRec(t, c.b.data); } catch (e) { return fail(c.res, 400, e.message); }
@@ -526,7 +537,7 @@ R('POST', '/api/records', (c) => {
   const r = db.prepare('INSERT INTO records(table_key,unit_id,data,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(t.key, unit, JSON.stringify(d), c.u.id, c.u.id, now(), now());
   audit(c.u.id, 'record_add', { t: t.key, id: +r.lastInsertRowid }, c.ip); send(c.res, 200, { id: +r.lastInsertRowid });
 });
-const ownRec = (c) => { const r = db.prepare('SELECT * FROM records WHERE id=?').get(+c.p.id); if (!r || !inScope(c.u, r.unit_id) || (c.u.role === 'expert' && r.unit_id !== c.u.unit_id)) return null; return r; };
+const ownRec = (c) => { const r = db.prepare('SELECT * FROM records WHERE id=?').get(+c.p.id); if (!r || !inScope(c.u, r.unit_id) || (!isManagerRole(c.u.role) && r.unit_id !== c.u.unit_id)) return null; return r; };
 R('PUT', '/api/records/:id', (c) => {
   const r = ownRec(c); if (!r) return fail(c.res, 403, 'اجازه ندارید.'); const t = TABLES[r.table_key];
   let d; try { d = cleanRec(t, c.b.data); } catch (e) { return fail(c.res, 400, e.message); }
@@ -538,7 +549,7 @@ R('DELETE', '/api/records/:id', (c) => {
 });
 R('GET', '/api/records.xlsx', (c) => {
   const t = TABLES[c.q.table]; if (!t) return fail(c.res, 400, 'جدول نامعتبر.');
-  const unit = +c.q.unit || c.u.unit_id; if (!inScope(c.u, unit) || (c.u.role === 'expert' && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  const unit = +c.q.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = subtreeIds(unit), rows = db.prepare(`SELECT r.data,u.name FROM records r JOIN units u ON u.id=r.unit_id WHERE r.table_key=? AND r.unit_id IN (${inList(ids)}) ORDER BY r.id`).all(t.key, ...ids);
   const grp = ['', ...t.cols.map(x => x.group)], head = ['واحد', ...t.cols.map(x => x.label)];
   audit(c.u.id, 'export_records', { t: t.key }, c.ip);

@@ -10,12 +10,12 @@ db.exec(`
 PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS units(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES units(id), type TEXT NOT NULL, name TEXT NOT NULL, UNIQUE(parent_id,name));
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, nid_hash TEXT UNIQUE NOT NULL, nid_enc TEXT NOT NULL, nid_last4 TEXT NOT NULL,
-  full_name TEXT NOT NULL, phone TEXT, email TEXT NOT NULL, unit_id INTEGER NOT NULL REFERENCES units(id), role TEXT NOT NULL CHECK(role IN('manager','expert')),
+  full_name TEXT NOT NULL, phone TEXT, email TEXT NOT NULL, unit_id INTEGER NOT NULL REFERENCES units(id), role TEXT NOT NULL CHECK(role IN('expert_ohs','behvarz','expert_ehs','responsible_ohs','manager_ohs')),
   pw_hash TEXT NOT NULL, totp_enc TEXT NOT NULL, totp_ok INTEGER DEFAULT 0, totp_last INTEGER DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN('pending','active','rejected','suspended')),
   fails INTEGER DEFAULT 0, locked_until INTEGER DEFAULT 0, approved_by INTEGER, created_at INTEGER, last_login INTEGER);
 CREATE TABLE IF NOT EXISTS allow(id INTEGER PRIMARY KEY, nid_hash TEXT UNIQUE NOT NULL, nid_enc TEXT NOT NULL, nid_last4 TEXT NOT NULL, unit_id INTEGER NOT NULL REFERENCES units(id),
-  role TEXT NOT NULL, note TEXT, created_by INTEGER, created_at INTEGER, used INTEGER DEFAULT 0);
+  role TEXT NOT NULL CHECK(role IN('expert_ohs','behvarz','expert_ehs','responsible_ohs','manager_ohs')), note TEXT, created_by INTEGER, created_at INTEGER, used INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, csrf TEXT NOT NULL, created INTEGER, last INTEGER, ip TEXT);
 CREATE TABLE IF NOT EXISTS periods(id INTEGER PRIMARY KEY, label TEXT UNIQUE NOT NULL, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN('open','closed')));
 CREATE TABLE IF NOT EXISTS entries(period_id INTEGER, unit_id INTEGER, ind_id TEXT, value TEXT, updated_by INTEGER, updated_at INTEGER, PRIMARY KEY(period_id,unit_id,ind_id));

@@ -11,7 +11,7 @@ const rName = rootName || (rType === 'country' ? 'ایران' : 'دانشگاه 
 if (!c) c = { id: +db.prepare("INSERT INTO units(parent_id,type,name) VALUES(NULL,?,?)").run(rType, rName).lastInsertRowid };
 if (db.prepare('SELECT 1 FROM users WHERE nid_hash=?').get(L.hmac(nid))) { console.error('این کد ملی قبلاً ثبت شده است.'); process.exit(1); }
 const pw = crypto.randomBytes(12).toString('base64url') + 'a1', secret = L.newTotpSecret();
-db.prepare("INSERT INTO users(nid_hash,nid_enc,nid_last4,full_name,email,unit_id,role,pw_hash,totp_enc,totp_ok,status,created_at) VALUES(?,?,?,?,?,?,'manager',?,?,1,'active',?)")
+db.prepare("INSERT INTO users(nid_hash,nid_enc,nid_last4,full_name,email,unit_id,role,pw_hash,totp_enc,totp_ok,status,created_at) VALUES(?,?,?,?,?,?,'manager_ohs',?,?,1,'active',?)")
   .run(L.hmac(nid), L.enc(nid), nid.slice(-4), name, email.toLowerCase(), c.id, L.hashPw(pw), L.enc(secret), Date.now());
 audit(null, 'root_created', { last4: nid.slice(-4) }, 'cli');
 console.log('\nمسئول ستاد ساخته شد.\nرمز موقت (بلافاصله تغییر دهید):', pw, '\nکلید احراز هویت (در Google Authenticator/برنامه‌ی مشابه وارد کنید):', secret,

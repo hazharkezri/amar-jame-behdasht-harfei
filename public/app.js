@@ -1,6 +1,7 @@
 'use strict';
 /* سامانه آمار بهداشت حرفه‌ای — رابط کاربری (بدون وابستگی خارجی، سازگار با CSP سخت‌گیرانه) */
 const S = { cat: null, me: null, csrf: null, per: null, periods: [], tab: null, units: [], inbox: {}, online: navigator.onLine };
+const isMgrRole = (r) => r === 'responsible_ohs' || r === 'manager_ohs';
 const $app = document.getElementById('app');
 const FA = '۰۱۲۳۴۵۶۷۸۹', fa = (n) => String(n ?? '').replace(/\d/g, d => FA[d]);
 const en = (s) => String(s ?? '').replace(/[۰-۹]/g, d => FA.indexOf(d)).replace(/[٠-٩]/g, d => d.charCodeAt(0) - 1632);
@@ -137,7 +138,7 @@ function regForm(box) {
 
 // ---------- قالب اصلی
 const TABS = () => {
-  const mgr = S.me.role === 'manager', root = mgr && !S.me.unit.parent_id;
+  const mgr = isMgrRole(S.me.role), root = mgr && !S.me.unit.parent_id;
   return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['analytics', 'تحلیل و شاخص‌ها', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', mgr, S.inbox.pendingUsers], ['admin', 'مدیریت ستاد', root]].filter(t => t[2]);
 };
 const TAB_ICONS = { entry: '✎', records: '☰', dash: '📊', report: '📈', analytics: '📉', appr: '✓', users: '👥', admin: '⚙' };
@@ -152,7 +153,7 @@ async function renderShell() {
     h('div', { class: 'brand' }, h('span', {}, 'آمار بهداشت حرفه‌ای'), h('span', { class: 'sep' }, '·'), h('span', { class: 'unit' }, S.me.unit.name)),
     h('span', { id: 'net', class: 'net' }),
     h('div', { class: 'actions' },
-      h('button', { class: 'who', 'aria-label': 'حساب من', title: 'حساب من', on: { click: accountDlg } }, h('span', { class: 'avatar' }, initials), h('span', { class: 'nm' }, S.me.full_name), h('span', { class: 'rl' }, S.me.role === 'manager' ? 'مسئول' : 'کارشناس')),
+      h('button', { class: 'who', 'aria-label': 'حساب من', title: 'حساب من', on: { click: accountDlg } }, h('span', { class: 'avatar' }, initials), h('span', { class: 'nm' }, S.me.full_name), h('span', { class: 'rl' }, isMgrRole(S.me.role) ? 'مسئول' : 'کارشناس')),
       h('button', { class: 'out', 'aria-label': 'خروج', title: 'خروج از حساب', on: { click: logout } }, 'خروج'))),
     nav, $view);
   updNet(); ({ entry: viewEntry, records: viewRecords, dash: viewDash, report: viewReport, analytics: viewAnalytics, appr: viewAppr, users: viewUsers, admin: viewAdmin })[S.tab]();
@@ -187,13 +188,13 @@ async function viewEntry() {
   const prog = (b) => { const l = visibleInds(b); return l.length ? Math.round(100 * l.filter(i => st.V[i] !== undefined && st.V[i] !== '').length / l.length) : 0; };
   const drawHead = () => {
     clear(head); const s = st.sub.status || 'draft';
-    head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, S.me.role === 'manager' ? unitSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
+    head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, isMgrRole(S.me.role) ? unitSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
       s === 'returned' && st.sub.note ? msg('warn', 'برگشت از مسئول: ' + st.sub.note) : null,
       s === 'approved' ? msg('ok', 'آمار این دوره تأیید و قفل شده است. برای اصلاح، مسئول بالادستی باید آن را برگشت دهد.') : null,
       s === 'submitted' ? h('div', {}, msg('info', 'آمار ارسال شد و منتظر تأیید است؛ ویرایش قفل است.'), h('button', { class: 'b sec sm', on: { click: async () => { const r = await api('POST', '/api/submit/withdraw', { period: S.per, unit: st.unit }); if (r.s === 200) renderShell(); else toast(r.j.error); } } }, 'پس‌گرفتن ارسال برای اصلاح')) : null,
       per.status !== 'open' ? (S.periods.length
-        ? msg('warn', (per.label ? `دوره‌ی «${per.label}» بسته است.` : 'این دوره بسته است.') + (S.me.role === 'manager' ? ' برای ورود آمار، از بخش «مدیریت ستاد» آن را باز کنید.' : ' برای ورود آمار باید دوره باز شود.'))
-        : msg('warn', 'هنوز هیچ دوره‌ی آماری تعریف نشده است؛ به همین دلیل ورود آمار غیرفعال است.' + (S.me.role === 'manager' ? ' از بخش «مدیریت ستاد» یک دوره بسازید.' : ''))) : null,
+        ? msg('warn', (per.label ? `دوره‌ی «${per.label}» بسته است.` : 'این دوره بسته است.') + (isMgrRole(S.me.role) ? ' برای ورود آمار، از بخش «مدیریت ستاد» آن را باز کنید.' : ' برای ورود آمار باید دوره باز شود.'))
+        : msg('warn', 'هنوز هیچ دوره‌ی آماری تعریف نشده است؛ به همین دلیل ورود آمار غیرفعال است.' + (isMgrRole(S.me.role) ? ' از بخش «مدیریت ستاد» یک دوره بسازید.' : ''))) : null,
       h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => download(`/api/export.xlsx?period=${S.per}&unit=${st.unit}`, 'آمار.xlsx') } }, 'خروجی اکسل'), locked ? null : h('button', { class: 'b sec sm', on: { click: () => importDlg(st.unit) } }, 'درون‌ریزی از اکسل'),
         locked ? null : h('button', { class: 'b', on: { click: submitDlg } }, 'ارسال برای تأیید'))));
   };
@@ -268,7 +269,7 @@ function importDlg(unitId) {
 // ================= جدول‌ها و فهرست‌ها (فایل ۲) =================
 async function viewRecords() {
   const st = { t: sessionStorageGet('tab') || S.cat.tables[0].key, unit: S.me.unit_id, q: '', off: 0 };
-  const mgr = S.me.role === 'manager', ctl = h('div', { class: 'card' }), list = h('div', { class: 'card' });
+  const mgr = isMgrRole(S.me.role), ctl = h('div', { class: 'card' }), list = h('div', { class: 'card' });
   $view.append(ctl, list);
   const T = () => S.cat.tables.find(x => x.key === st.t);
   const draw = () => {
@@ -402,13 +403,13 @@ async function viewUsers() {
     box.append(h('div', { class: 'card' }, h('h1', {}, 'درخواست‌های در انتظار تأیید شما'),
       pend.length ? h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'واحد', 'کد ملی', 'ایمیل', 'تلفن', ''].map(x => h('th', {}, x))), pend.map(u => h('tr', {}, h('td', {}, u.full_name), h('td', {}, u.unit_name), h('td', { class: 'ltr' }, u.nid), h('td', { class: 'ltr' }, u.email), h('td', { class: 'ltr' }, u.phone), h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm', on: { click: () => { if (confirm(`دسترسی ${u.full_name} (کد ملی ${u.nid}) تأیید شود؟\nبا تأیید، این فرد به آمار واحد «${u.unit_name}» دسترسی می‌یابد.`)) setSt(u, 'active'); } } }, 'تأیید'), h('button', { class: 'b sm red', on: { click: () => setSt(u, 'rejected') } }, 'رد'))))))) : h('p', { class: 'mut' }, 'درخواستی نیست. (کسانی که هنوز برنامه‌ی احراز هویت را تأیید نکرده‌اند اینجا نمی‌آیند.)')));
     // فهرست مجاز
-    const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10 }), note = h('input', { placeholder: 'نام (اختیاری)' }), role = h('select', {}, h('option', { value: 'expert' }, 'کارشناس'), h('option', { value: 'manager' }, 'مسئول')), uSel = unitSel(S.me.unit_id, () => { }), out = h('div');
+    const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10 }), note = h('input', { placeholder: 'نام (اختیاری)' }), role = h('select', {}, (S.cat.roleFa?Object.entries(S.cat.roleFa):[]).map(([k,v])=>h('option',{value:k},v))), uSel = unitSel(S.me.unit_id, () => { }), out = h('div');
     box.append(h('div', { class: 'card' }, h('h1', {}, 'فهرست مجاز (دعوت)'), h('p', { class: 'mut' }, 'ثبت‌نام فقط برای کد ملی‌هایی ممکن است که شما اینجا ثبت کنید. پس از ثبت‌نامِ فرد، باید همین‌جا دسترسی‌اش را تأیید کنید.'),
       h('form', { on: { submit: async (e) => { e.preventDefault(); clear(out); const r = await api('POST', '/api/allow', { nid: en(nid.value), unit_id: +uSel.value, role: role.value, note: note.value }); if (r.s === 200) { toast('افزوده شد'); load(); } else out.append(msg('err', r.j.error)); } } },
         h('div', { class: 'grid2' }, field('کد ملی', nid), field('نام', note), field('واحد', uSel), field('نقش', role)), out, h('div', { class: 'row' }, h('button', { class: 'b' }, 'افزودن'), h('button', { type: 'button', class: 'b sec', on: { click: bulkDlg } }, 'بارگذاری گروهی (اکسل / متن)'), h('button', { type: 'button', class: 'b sec', on: { click: () => download('/api/allow/template.xlsx', 'قالب.xlsx') } }, 'دانلود قالب اکسل'))),
-      h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['کد ملی', 'نام', 'واحد', 'نقش', 'وضعیت', ''].map(x => h('th', {}, x))), (al.j || []).map(a => h('tr', {}, h('td', { class: 'ltr' }, '••••••' + a.nid_last4), h('td', {}, a.note), h('td', {}, (S.units.find(u => u.id === a.unit_id) || {}).name), h('td', {}, a.role === 'manager' ? 'مسئول' : 'کارشناس'), h('td', {}, a.used ? 'ثبت‌نام کرده' : 'منتظر ثبت‌نام'), h('td', {}, a.used ? null : h('button', { class: 'b sm red', on: { click: async () => { if (confirm('حذف شود؟')) { await api('DELETE', '/api/allow/' + a.id); load(); } } } }, 'حذف'))))))));
+      h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['کد ملی', 'نام', 'واحد', 'نقش', 'وضعیت', ''].map(x => h('th', {}, x))), (al.j || []).map(a => h('tr', {}, h('td', { class: 'ltr' }, '••••••' + a.nid_last4), h('td', {}, a.note), h('td', {}, (S.units.find(u => u.id === a.unit_id) || {}).name), h('td', {}, (S.cat.roleFa || {})[a.role] || a.role), h('td', {}, a.used ? 'ثبت‌نام کرده' : 'منتظر ثبت‌نام'), h('td', {}, a.used ? null : h('button', { class: 'b sm red', on: { click: async () => { if (confirm('حذف شود؟')) { await api('DELETE', '/api/allow/' + a.id); load(); } } } }, 'حذف'))))))));
     box.append(h('div', { class: 'card' }, h('h1', {}, 'همه‌ی کاربران'), h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'واحد', 'نقش', 'کد ملی', 'وضعیت', 'آخرین ورود', ''].map(x => h('th', {}, x))),
-      us.j.map(u => h('tr', {}, h('td', {}, u.full_name), h('td', {}, u.unit_name), h('td', {}, u.role === 'manager' ? 'مسئول' : 'کارشناس'), h('td', { class: 'ltr' }, '••••••' + u.nid_last4), h('td', {}, SF[u.status] || u.status), h('td', {}, when(u.last_login)),
+      us.j.map(u => h('tr', {}, h('td', {}, u.full_name), h('td', {}, u.unit_name), h('td', {}, (S.cat.roleFa || {})[u.role] || u.role), h('td', { class: 'ltr' }, '••••••' + u.nid_last4), h('td', {}, SF[u.status] || u.status), h('td', {}, when(u.last_login)),
         h('td', {}, h('div', { class: 'row' }, u.status === 'active' ? h('button', { class: 'b sm red', on: { click: () => { if (confirm('دسترسی معلق شود؟')) setSt(u, 'suspended'); } } }, 'تعلیق') : null, ['suspended', 'rejected'].includes(u.status) && u.totp_ok ? h('button', { class: 'b sm', on: { click: () => setSt(u, 'active') } }, 'فعال‌سازی') : null,
           h('button', { class: 'b sm sec', on: { click: async () => { if (!confirm('حساب پاک و کد ملی دوباره برای ثبت‌نام آزاد می‌شود (مثلاً برای گم‌شدن گوشی). ادامه؟')) return; const r = await api('POST', `/api/users/${u.id}/reset`, {}); if (r.s === 200) load(); else toast(r.j.error); } } }, 'بازنشانی')))))))));
   }
