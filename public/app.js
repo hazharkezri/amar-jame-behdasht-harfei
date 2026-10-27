@@ -138,9 +138,9 @@ function regForm(box) {
 // ---------- قالب اصلی
 const TABS = () => {
   const mgr = S.me.role === 'manager', root = mgr && !S.me.unit.parent_id;
-  return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', mgr, S.inbox.pendingUsers], ['admin', 'مدیریت ستاد', root]].filter(t => t[2]);
+  return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['analytics', 'تحلیل و شاخص‌ها', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', mgr, S.inbox.pendingUsers], ['admin', 'مدیریت ستاد', root]].filter(t => t[2]);
 };
-const TAB_ICONS = { entry: '✎', records: '☰', dash: '📊', report: '📈', appr: '✓', users: '👥', admin: '⚙' };
+const TAB_ICONS = { entry: '✎', records: '☰', dash: '📊', report: '📈', analytics: '📉', appr: '✓', users: '👥', admin: '⚙' };
 let $view;
 async function renderShell() {
   const ib = await api('GET', '/api/inbox'); S.inbox = ib.j || {};
@@ -155,7 +155,7 @@ async function renderShell() {
       h('button', { class: 'who', 'aria-label': 'حساب من', title: 'حساب من', on: { click: accountDlg } }, h('span', { class: 'avatar' }, initials), h('span', { class: 'nm' }, S.me.full_name), h('span', { class: 'rl' }, S.me.role === 'manager' ? 'مسئول' : 'کارشناس')),
       h('button', { class: 'out', 'aria-label': 'خروج', title: 'خروج از حساب', on: { click: logout } }, 'خروج'))),
     nav, $view);
-  updNet(); ({ entry: viewEntry, records: viewRecords, dash: viewDash, report: viewReport, appr: viewAppr, users: viewUsers, admin: viewAdmin })[S.tab]();
+  updNet(); ({ entry: viewEntry, records: viewRecords, dash: viewDash, report: viewReport, analytics: viewAnalytics, appr: viewAppr, users: viewUsers, admin: viewAdmin })[S.tab]();
 }
 async function logout() { await api('POST', '/api/logout', {}); S.me = null; S.csrf = null; renderLogin(); }
 function modal(title, body, wide) {
@@ -424,6 +424,38 @@ async function viewUsers() {
   load();
 }
 
+// ================= تحلیل و شاخص‌ها =================
+async function viewAnalytics() {
+  const st = { unit: S.me.unit_id, kpi: S.cat.kpis[0], only: false }, box = h('div');
+  $view.append(box);
+  async function load() {
+    const r = await api('GET', `/api/dashboard?period=${S.per}&unit=${st.unit}${st.only ? '&approved=1' : ''}`); clear(box);
+    if (r.s !== 200) return box.append(msg('err', r.j.error));
+    const d = r.j, ST = S.cat.statusFa, kt = Object.fromEntries(d.kpis.map(k => [k.code, k.title]));
+    const rows = d.rows.map(x => ({ ...x, v: x.kpi[st.kpi] })).sort((a, b) => (b.v ?? -1) - (a.v ?? -1));
+    const unitName = (S.units.find(u => u.id === st.unit) || {}).name || d.unit.name;
+    box.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h1', {}, 'تحلیل و شاخص‌ها — ', unitName), h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => { if (d.unit.parent_id) { st.unit = d.unit.parent_id; load(); } } } }, '↑ بالاتر'), periodSel(() => renderShell()))),
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: st.only, on: { change: (e) => { st.only = e.target.checked; load(); } } }), 'فقط تأییدشده‌ها'),
+      h('div', { class: 'row' }, S.cat.kpis.map(k => h('button', { class: 'pill' + (k === st.kpi ? ' on' : ''), on: { click: () => { st.kpi = k; load(); } } }, kt[k]))));
+    // KPI summary
+    box.append(h('div', { class: 'card' }, h('h2', {}, 'شاخص کل واحد'), h('div', { class: 'kpis' }, d.kpis.map(k => h('div', { class: 'kpi' }, h('b', {}, d.total[k.code] === null ? '—' : fa(d.total[k.code]) + '٪'), h('span', {}, k.title)))));
+    // Ranking table
+    const tbl = h('table', { class: 'tbl' }, h('tr', {}, h('th', {}, 'رتبه'), h('th', {}, 'واحد'), h('th', {}, 'وضعیت'), h('th', {}, kt[st.kpi]), h('th', {}, 'نقاط قوت/ضعف')));
+    rows.forEach((x, i) => {
+      const strong = x.v !== null && x.v >= 80; const weak = x.v !== null && x.v < 50;
+      tbl.append(h('tr', {}, h('td', {}, fa(i + 1)), h('td', { class: 'l' }, x.name), h('td', {}, h('span', { class: 'st ' + x.status }, ST[x.status].split('—')[0])), h('td', {}, x.v === null ? '—' : fa(x.v) + '٪'), h('td', {}, strong ? '✓ قوی' : weak ? '⚠ ضعیف — نیاز به مداخله' : '—')));
+    });
+    box.append(h('div', { class: 'card' }, h('h2', {}, 'رتبه‌بندی واحدها بر اساس ' + kt[st.kpi]), h('div', { class: 'scroll' }, tbl)));
+    // Weaknesses / interventions
+    const weakUnits = rows.filter(x => x.v !== null && x.v < 50);
+    if (weakUnits.length) box.append(h('div', { class: 'card' }, h('h2', {}, 'نقاط ضعف و مداخلات پیشنهادی'), h('ul', {}, weakUnits.map(x => h('li', {}, x.name + ' — ' + kt[st.kpi] + ': ' + fa(x.v) + '٪. پیشنهاد: بازرسی هدفمند، آموزش، و پایش ماهانه.')))));
+    const strongUnits = rows.filter(x => x.v !== null && x.v >= 80);
+    if (strongUnits.length) box.append(h('div', { class: 'card' }, h('h2', {}, 'نقاط قوت'), h('ul', {}, strongUnits.map(x => h('li', {}, x.name + ' — ' + kt[st.kpi] + ': ' + fa(x.v) + '٪. الگو برای سایر واحدها.')))));
+    // Verification section
+    box.append(h('div', { class: 'card' }, h('h2', {}, 'راستی‌آزمایی (Audit)'), h('p', { class: 'mut' }, 'برای بررسی یکپارچگی داده‌ها، از بخش «مدیریت ستاد» ← «ممیزی» استفاده کنید. هشدارهای منطقی در صفحه‌ی «تأیید ارسال‌ها» قابل مشاهده است.')));
+  }
+  load();
+}
 // ================= مدیریت ستاد =================
 async function viewAdmin() {
   const box = h('div'); $view.append(box);
