@@ -583,4 +583,5 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e.message); if (!res.headersSent) fail(res, 400, 'درخواست نامعتبر'); }
 });
 if (require.main === module) server.listen(PORT, process.env.HOST || '127.0.0.1', () => console.log('listening on', PORT));
-module.exports = { server };
+module.exports = server;
+module.exports.server = server;
