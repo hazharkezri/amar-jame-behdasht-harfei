@@ -1,0 +1,1 @@
+{"name":"amar-salamat-kar","version":"2.0.0","private":true,"description":"سامانه آمار بهداشت حرفه‌ای — دانشگاه علوم پزشکی ارومیه","engines":{"node":">=22.5"},"scripts":{"start":"node --no-warnings server.js","test":"node --no-warnings test/smoke.js"}}

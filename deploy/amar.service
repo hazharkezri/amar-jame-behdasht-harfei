@@ -1,0 +1,13 @@
+[Unit]
+Description=Amar Salamat Kar
+After=network.target
+[Service]
+WorkingDirectory=/opt/amar-system
+EnvironmentFile=/opt/amar-system/.env
+ExecStart=/usr/bin/node --no-warnings server.js
+Restart=always
+User=amar
+NoNewPrivileges=true
+ProtectSystem=full
+[Install]
+WantedBy=multi-user.target

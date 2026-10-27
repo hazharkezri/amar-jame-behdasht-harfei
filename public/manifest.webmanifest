@@ -1,0 +1,21 @@
+{
+  "name": "سامانه آمار بهداشت حرفه‌ای",
+  "short_name": "آمار سلامت کار",
+  "description": "سامانه ثبت و مدیریت آمار بهداشت حرفه‌ای",
+  "lang": "fa-IR",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f6",
+  "theme_color": "#0b6b5e",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
