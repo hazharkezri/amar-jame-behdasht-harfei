@@ -459,6 +459,25 @@ async function viewAnalytics() {
     if (strongUnits.length) box.append(h('div', { class: 'card' }, h('h2', {}, 'نقاط قوت'), h('ul', {}, strongUnits.map(x => h('li', {}, x.name + ' — ' + kt[st.kpi] + ': ' + fa(x.v) + '٪. الگو برای سایر واحدها.')))));
     // Verification section
     box.append(h('div', { class: 'card' }, h('h2', {}, 'راستی‌آزمایی (Audit)'), h('p', { class: 'mut' }, 'برای بررسی یکپارچگی داده‌ها، از بخش «مدیریت ستاد» ← «ممیزی» استفاده کنید. هشدارهای منطقی در صفحه‌ی «تأیید ارسال‌ها» قابل مشاهده است.')));
+    // Inspector ranking
+    const insp = await api('GET', `/api/inspector-stats?period=${S.per}`);
+    if (insp.s === 200 && insp.j.length) {
+      const itbl = h('table', { class: 'tbl' }, h('tr', {}, h('th', {}, 'رتبه'), h('th', {}, 'بازرس/کارشناس'), h('th', {}, 'نقش'), h('th', {}, 'تعداد خانه‌های ثبت‌شده'), h('th', {}, 'آخرین فعالیت')));
+      insp.j.forEach((x, i) => itbl.append(h('tr', {}, h('td', {}, fa(i + 1)), h('td', { class: 'l' }, x.name), h('td', {}, (S.cat.roleFa || {})[x.role] || x.role), h('td', {}, fa(x.n)), h('td', {}, when(x.last)))));
+      box.append(h('div', { class: 'card' }, h('h2', {}, 'رتبه‌بندی بازرسان/کارشناسان'), h('div', { class: 'scroll' }, itbl)));
+    }
+    // Chart
+    const W = 500, BH = 22, H = Math.max(60, rows.length * BH + 10);
+    const svgEl = svg('svg', { class: 'bars', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': kt[st.kpi] });
+    const mx = Math.max(1, ...rows.map(r => r.v || 0));
+    rows.forEach((r, i) => {
+      const y = 5 + i * BH, w = r.v ? (r.v / mx) * 260 : 0;
+      const col = r.v !== null && r.v >= 80 ? '#0f8a79' : r.v !== null && r.v < 50 ? '#b91c1c' : '#2563eb';
+      svgEl.append(svg('text', { x: W - 4, y: y + 15, 'text-anchor': 'end', 'font-size': 11, fill: '#17302c' }, r.name.slice(0, 24)));
+      svgEl.append(svg('rect', { x: W - 100 - w, y: y + 2, width: Math.max(w, 1), height: 16, rx: 3, fill: col }));
+      svgEl.append(svg('text', { x: W - 104 - w, y: y + 15, 'text-anchor': 'end', 'font-size': 11, fill: '#5d7570' }, r.v === null ? '—' : fa(r.v) + '٪'));
+    });
+    box.append(h('div', { class: 'card' }, h('h2', {}, 'نمودار ' + kt[st.kpi]), svgEl));
   }
   load();
 }

@@ -449,6 +449,12 @@ R('GET', '/api/progress', (c) => {
   const per = +c.q.period, ids = scopeOf(c.u);
   send(c.res, 200, db.prepare(`SELECT unit_id, COUNT(*) n, MAX(updated_at) last FROM entries WHERE period_id=? AND unit_id IN (${inList(ids)}) GROUP BY unit_id`).all(per, ...ids));
 });
+R('GET', '/api/inspector-stats', (c) => {
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const per = +c.q.period, ids = scopeOf(c.u);
+  const rows = db.prepare(`SELECT e.updated_by uid, u.full_name name, u.role role, COUNT(*) n, MAX(e.updated_at) last FROM entries e JOIN users u ON u.id=e.updated_by WHERE e.period_id=? AND e.unit_id IN (${inList(ids)}) GROUP BY e.updated_by ORDER BY n DESC`).all(per, ...ids);
+  send(c.res, 200, rows);
+});
 R('GET', '/api/dashboard', (c) => {
   if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const unit = +c.q.unit || c.u.unit_id, per = +c.q.period; if (!inScope(c.u, unit)) return fail(c.res, 403, 'اجازه ندارید.');
