@@ -188,7 +188,16 @@ async function viewEntry() {
   const prog = (b) => { const l = visibleInds(b); return l.length ? Math.round(100 * l.filter(i => st.V[i] !== undefined && st.V[i] !== '').length / l.length) : 0; };
   const drawHead = () => {
     clear(head); const s = st.sub.status || 'draft';
-    head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, isMgrRole(S.me.role) ? unitSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
+    const entrySearch = h('input', { placeholder: 'جست‌وجوی واحد...', style: 'width:200px' });
+    entrySearch.addEventListener('input', () => {
+      const q = entrySearch.value.trim();
+      const sel = head.querySelector('select');
+      if (!sel) return;
+      const filtered = S.units.filter(u => !q || u.name.includes(q));
+      sel.innerHTML = '';
+      filtered.forEach(u => { const o = h('option', { value: u.id }, '— '.repeat(depth0(u.id)) + u.name); if (u.id === st.unit) o.selected = true; sel.append(o); });
+    });
+    head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, entrySearch, isMgrRole(S.me.role) ? unitSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
       s === 'returned' && st.sub.note ? msg('warn', 'برگشت از مسئول: ' + st.sub.note) : null,
       s === 'approved' ? msg('ok', 'آمار این دوره تأیید و قفل شده است. برای اصلاح، مسئول بالادستی باید آن را برگشت دهد.') : null,
       s === 'submitted' ? h('div', {}, msg('info', 'آمار ارسال شد و منتظر تأیید است؛ ویرایش قفل است.'), h('button', { class: 'b sec sm', on: { click: async () => { const r = await api('POST', '/api/submit/withdraw', { period: S.per, unit: st.unit }); if (r.s === 200) renderShell(); else toast(r.j.error); } } }, 'پس‌گرفتن ارسال برای اصلاح')) : null,
