@@ -500,8 +500,17 @@ async function viewAdmin() {
     prof.append(h('button', { class: 'b', on: { click: async () => { for (const [ty] of types) { const hide = [], show = []; for (const [t2, k, on] of Object.values(chg)) if (t2 === ty) (on ? show : hide).push(k); if (hide.length || show.length) await api('POST', '/api/profile', { unit_type: ty, hide, show }); } toast('ذخیره شد'); load(); } } }, 'ذخیره‌ی پروفایل‌ها'));
     box.append(prof);
     // واحدها
-    const nm = h('input', { placeholder: 'نام واحد جدید' }), par = unitSel(S.me.unit_id, () => { }, (u) => u.type !== 'house');
-    box.append(h('div', { class: 'card' }, h('h1', {}, 'ساختار واحدها'), h('p', { class: 'mut' }, `${fa(S.units.length)} واحد تعریف شده است. (برای افزودن مرکز/پایگاه/خانه‌ی بهداشت، واحد والد را انتخاب کنید؛ نوع واحد به‌صورت خودکار تعیین می‌شود.)`), h('div', { class: 'grid2' }, field('زیرمجموعه‌ی', par), field('نام واحد جدید', nm)),
+    const nm = h('input', { placeholder: 'نام واحد جدید' });
+    const searchInp = h('input', { placeholder: 'جست‌وجوی واحد (دانشگاه/شهرستان/مرکز/...)...', style: 'width:100%' });
+    const par = unitSel(S.me.unit_id, () => { }, (u) => u.type !== 'house');
+    searchInp.addEventListener('input', () => {
+      const q = searchInp.value.trim();
+      const filtered = S.units.filter(u => u.type !== 'house' && (!q || u.name.includes(q)));
+      par.innerHTML = '';
+      filtered.forEach(u => { const o = h('option', { value: u.id }, '— '.repeat(depth0(u.id)) + u.name); par.append(o); });
+      if (filtered.length) par.value = filtered[0].id;
+    });
+    box.append(h('div', { class: 'card' }, h('h1', {}, 'ساختار واحدها'), h('p', { class: 'mut' }, `${fa(S.units.length)} واحد تعریف شده است. (برای افزودن مرکز/پایگاه/خانه‌ی بهداشت، واحد والد را انتخاب کنید؛ نوع واحد به‌صورت خودکار تعیین می‌شود.)`), field('جست‌وجو', searchInp), h('div', { class: 'grid2' }, field('زیرمجموعه‌ی', par), field('نام واحد جدید', nm)),
       h('div', { class: 'row' }, h('button', { class: 'b', on: { click: async () => { const r = await api('POST', '/api/units', { parent_id: +par.value, name: nm.value }); if (r.s === 200) { const u = await api('GET', '/api/units'); S.units = u.j; load(); } else toast(r.j.error); } } }, 'افزودن واحد'),
         h('button', { class: 'b red sm', on: { click: async () => { if (!confirm('این واحد و تمام زیرمجموعه‌های آن حذف شوند؟')) return; const r = await api('DELETE', '/api/units/' + par.value); if (r.s === 200) { const u = await api('GET', '/api/units'); S.units = u.j; load(); } else toast(r.j.error); } } }, 'حذف واحد انتخاب‌شده'))));
     // فایل ۲
