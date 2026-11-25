@@ -192,9 +192,16 @@ function cascadeSel(cur, onch) {
     let parent = rootOf();
     wrap.append(h('span', { class: 'cascade-root' }, parent.type === 'country' ? 'ایران' : parent.name));
     const onPath = new Set(ancestorsOf(selected));
-    for (const [type, label] of CHAIN) {
+    for (let ti = 0; ti < CHAIN.length; ti++) {
+      const [type, label] = CHAIN[ti];
       const kids = S.units.filter(u => u.parent_id === parent.id && u.type === type);
-      if (!kids.length) break;
+      if (!kids.length) {
+        // برخی مراکز خانه بهداشت مستقیم دارند و پایگاه میانی ندارند؛ از این سطح بگذریم.
+        const later = CHAIN.slice(ti + 1).some(([laterType]) =>
+          S.units.some(u => u.parent_id === parent.id && u.type === laterType));
+        if (later) continue;
+        break;
+      }
       const onPathKid = kids.find(k => onPath.has(k.id));
       const sel = h('select', { title: label, 'aria-label': label });
       kids.forEach(k => sel.append(h('option', { value: k.id, selected: k.id === (onPathKid || {}).id }, k.name)));
