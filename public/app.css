@@ -683,6 +683,18 @@ details.sub > summary span { flex: 1; min-width: 0; }
   .card { padding: .85rem .8rem; }
 }
 
+/* ---------- منوی آبشاری واحدها ---------- */
+.cascade { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; max-width: 100%; }
+.cascade select, .cascade input { max-width: 13rem; min-width: 7rem; font-size: .86rem; padding: .4rem .55rem; border: 1px solid var(--line, #d8dee9); border-radius: .6rem; background: #fff; color: #0f172a; }
+.cascade select:focus, .cascade input:focus { outline: 2px solid #6366f1; outline-offset: 1px; }
+.cascade-root { font-weight: 700; color: #4338ca; background: #eef2ff; border-radius: .6rem; padding: .38rem .6rem; white-space: nowrap; }
+.cascade-step { display: flex; flex-direction: column; gap: .12rem; }
+.cascade-step small { font-size: .68rem; color: #64748b; line-height: 1.2; }
+.cascade-search { max-width: 8rem !important; min-width: 6rem !important; }
+@media (max-width: 800px) {
+  .cascade select, .cascade input { max-width: 100%; min-width: 0; }
+}
+
 /* ---------- چاپ ---------- */
 @media print {
   .top, nav.tabs, .warnbox, .pills, button, #toast, .modal { display: none !important; }

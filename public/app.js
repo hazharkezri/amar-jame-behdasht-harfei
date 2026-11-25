@@ -172,6 +172,54 @@ const periodSel = (onch) => { const s = h('select', { on: { change: () => { S.pe
 const unitSel = (cur, onch, filter) => { const s = h('select', { on: { change: () => onch(+s.value) } }, S.units.filter(filter || (() => true)).map(u => h('option', { value: u.id, selected: u.id === cur }, '— '.repeat(depth(u)) + u.name))); return s; };
 function depth0(id) { let d = 0, x = S.units.find(y => y.id === id); while (x && x.parent_id && S.units.some(y => y.id === x.parent_id)) { x = S.units.find(y => y.id === x.parent_id); d++; } return d; }
 const depth = (u) => depth0(u.id);
+const CHAIN = [['university', 'دانشگاه'], ['county', 'شهرستان / شبکه'], ['center', 'مرکز خدمات جامع سلامت'], ['base', 'پایگاه سلامت'], ['house', 'خانه بهداشت']];
+function ancestorsOf(id) {
+  const out = []; let x = S.units.find(u => u.id === +id);
+  while (x) { out.unshift(x.id); x = x.parent_id == null ? null : S.units.find(u => u.id === x.parent_id); }
+  return out;
+}
+function subtreeLocal(id) {
+  const out = []; const walk = (i) => { out.push(i); S.units.filter(u => u.parent_id === i).forEach(u => walk(u.id)); }; walk(id); return out;
+}
+// منوی کشویی آبشاری: ایران ← دانشگاه ← شهرستان ← مرکز ← پایگاه ← خانه بهداشت
+function cascadeSel(cur, onch) {
+  const wrap = h('div', { class: 'cascade' });
+  const byId = (id) => S.units.find(u => u.id === +id);
+  let selected = +cur;
+  const rootOf = () => { let x = byId(selected); while (x && x.parent_id != null && byId(x.parent_id)) x = byId(x.parent_id); return x || { id: null, name: 'ایران' }; };
+  function rebuild() {
+    clear(wrap);
+    let parent = rootOf();
+    wrap.append(h('span', { class: 'cascade-root' }, parent.type === 'country' ? 'ایران' : parent.name));
+    const onPath = new Set(ancestorsOf(selected));
+    for (const [type, label] of CHAIN) {
+      const kids = S.units.filter(u => u.parent_id === parent.id && u.type === type);
+      if (!kids.length) break;
+      const onPathKid = kids.find(k => onPath.has(k.id));
+      const sel = h('select', { title: label, 'aria-label': label });
+      kids.forEach(k => sel.append(h('option', { value: k.id, selected: k.id === (onPathKid || {}).id }, k.name)));
+      sel.addEventListener('change', () => { selected = +sel.value; rebuild(); onch(selected); });
+      wrap.append(h('div', { class: 'cascade-step' }, h('small', {}, label), sel));
+      if (!onPathKid) break; // سطح بعدی پس از انتخاب این سطح باز می‌شود
+      parent = onPathKid;
+    }
+    const search = h('input', { class: 'cascade-search', placeholder: 'جست وجو...' });
+    const final = h('select', { title: 'واحد مورد نظر', 'aria-label': 'واحد مورد نظر' });
+    const ids = subtreeLocal(parent.id);
+    const fill = (q) => {
+      clear(final);
+      ids.filter(id => !q || byId(id).name.includes(q)).forEach(id => {
+        const u = byId(id); final.append(h('option', { value: id, selected: id === selected }, '— '.repeat(depth0(id)) + u.name));
+      });
+    };
+    fill('');
+    search.addEventListener('input', () => fill(search.value.trim()));
+    final.addEventListener('change', () => { selected = +final.value; rebuild(); onch(selected); });
+    wrap.append(search, final);
+  }
+  rebuild();
+  return wrap;
+}
 
 // ================= ورود آمار =================
 async function viewEntry() {
@@ -188,16 +236,7 @@ async function viewEntry() {
   const prog = (b) => { const l = visibleInds(b); return l.length ? Math.round(100 * l.filter(i => st.V[i] !== undefined && st.V[i] !== '').length / l.length) : 0; };
   const drawHead = () => {
     clear(head); const s = st.sub.status || 'draft';
-    const entrySearch = h('input', { placeholder: 'جست‌وجوی واحد...', style: 'width:200px' });
-    entrySearch.addEventListener('input', () => {
-      const q = entrySearch.value.trim();
-      const sel = head.querySelector('select');
-      if (!sel) return;
-      const filtered = S.units.filter(u => !q || u.name.includes(q));
-      sel.innerHTML = '';
-      filtered.forEach(u => { const o = h('option', { value: u.id }, '— '.repeat(depth0(u.id)) + u.name); if (u.id === st.unit) o.selected = true; sel.append(o); });
-    });
-    head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, entrySearch, isMgrRole(S.me.role) ? unitSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
+    head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, isMgrRole(S.me.role) ? cascadeSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
       s === 'returned' && st.sub.note ? msg('warn', 'برگشت از مسئول: ' + st.sub.note) : null,
       s === 'approved' ? msg('ok', 'آمار این دوره تأیید و قفل شده است. برای اصلاح، مسئول بالادستی باید آن را برگشت دهد.') : null,
       s === 'submitted' ? h('div', {}, msg('info', 'آمار ارسال شد و منتظر تأیید است؛ ویرایش قفل است.'), h('button', { class: 'b sec sm', on: { click: async () => { const r = await api('POST', '/api/submit/withdraw', { period: S.per, unit: st.unit }); if (r.s === 200) renderShell(); else toast(r.j.error); } } }, 'پس‌گرفتن ارسال برای اصلاح')) : null,
