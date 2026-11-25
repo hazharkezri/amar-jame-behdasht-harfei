@@ -63,6 +63,16 @@ for (const [nid, name, role, unitId, email] of users) {
 }
 if (created) audit(null, 'pilot_seeded', { county: county.id, users: created }, 'seed');
 
+// داده‌ی نمونه برای آزمایش داشبورد و تأیید
+const period = db.prepare("SELECT id FROM periods WHERE status='open' ORDER BY id LIMIT 1").get();
+if (period && ids['مرکز خدمات جامع سلامت پسوه']) {
+  const center = ids['مرکز خدمات جامع سلامت پسوه'];
+  for (const [ind, val] of [['B1-A', '12'], ['B1-B', '8']]) {
+    db.prepare('INSERT OR IGNORE INTO entries(period_id,unit_id,ind_id,value,updated_by,updated_at) VALUES(?,?,?,?,NULL,?)').run(period.id, center, ind, val, Date.now());
+  }
+  db.prepare("INSERT OR IGNORE INTO submissions(period_id,unit_id,status,note) VALUES(?,?,'approved','داده‌ی نمونه‌ی پایلوت پیرانشهر')").run(period.id, center);
+}
+
 console.log('پایلوت پیرانشهر آماده است.');
 console.log('دانشگاه:', uni.id, '| شهرستان:', county.id);
 for (const [nid, name, role] of users) console.log(' ', nid, role, name);
