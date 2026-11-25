@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const L = require('./lib');
 const X = require('./xlsx');
 const { db, audit, verifyAudit, subtreeIds, inList, tx } = require('./db');
+require('./bootstrap');
 const { CAT, REP, TAB, IND, RULES, checkRules, computeReport, normVal } = require('./report');
 const { importFile2 } = require('./import2');
 

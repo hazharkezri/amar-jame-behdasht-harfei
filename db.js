@@ -3,7 +3,7 @@ const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
 const { sha } = require('./lib');
-const file = process.env.DB_FILE || path.join(__dirname, 'data', 'app.db');
+const file = process.env.DB_FILE || (process.env.VERCEL ? '/tmp/amar-app.db' : path.join(__dirname, 'data', 'app.db'));
 fs.mkdirSync(path.dirname(file), { recursive: true });
 const db = new DatabaseSync(file);
 db.exec(`
