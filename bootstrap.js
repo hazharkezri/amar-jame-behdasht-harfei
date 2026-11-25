@@ -20,6 +20,8 @@ if (!db.prepare('SELECT 1 FROM units LIMIT 1').get()) {
   require('./scripts/seed-periods');
   // نمونه مراکز خدمات جامع سلامت (در صورت وجود فایل)
   try { require('./scripts/seed-centers'); } catch (e) { console.warn('seed-centers skipped:', e.message); }
+  // پایلوت دانشگاه ارومیه / پیرانشهر
+  try { require('./scripts/seed-pilot'); } catch (e) { console.warn('seed-pilot skipped:', e.message); }
 
   console.log('Bootstrap complete. root user:', nid, 'temp password:', pw, 'totp:', secret);
 }
