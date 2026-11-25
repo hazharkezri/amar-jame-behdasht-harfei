@@ -14,6 +14,7 @@ const PORT = +process.env.PORT || 3000;
 const SECURE = process.env.COOKIE_SECURE !== '0';
 const DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS || 'ac.ir,gov.ir').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const IDLE = 30 * 60e3, ABS = 12 * 3600e3;
+const STATELESS = process.env.STATELESS_AUTH === '1';
 const NEXT = { country: 'university', university: 'county', county: 'center', center: 'base', base: 'house' };
 const TYPE_FA = { country: 'ستاد کشوری', university: 'دانشگاه علوم پزشکی', county: 'شهرستان / مرکز بهداشت', center: 'مرکز خدمات جامع سلامت', base: 'پایگاه سلامت', house: 'خانه‌ی بهداشت' };
 const ROLE_FA = { expert_ohs: 'کارشناس بهداشت حرفه‌ای', behvarz: 'بهورز', expert_ehs: 'کارشناس بهداشت محیط', responsible_ohs: 'کارشناس مسئول بهداشت حرفه‌ای', manager_ohs: 'مدیر گروه بهداشت حرفه‌ای' };
@@ -68,8 +69,31 @@ function canDecide(actor, unitId) {
 }
 const getSub = (per, unit) => db.prepare('SELECT * FROM submissions WHERE period_id=? AND unit_id=?').get(per, unit) || { period_id: per, unit_id: unit, status: 'draft' };
 const editable = (per, unit) => ['draft', 'returned'].includes(getSub(per, unit).status);
+function makeStatelessSession(u) {
+  const payload = Buffer.from(JSON.stringify({ uid: u.id, csrf: crypto.randomBytes(24).toString('hex'), created: now() })).toString('base64url');
+  return payload + '.' + L.hmac(payload);
+}
+function readStateless(sid) {
+  const parts = String(sid).split('.'); if (parts.length !== 2) return null;
+  const [payload, sig] = parts; if (!payload || !sig || L.hmac(payload) !== sig) return null;
+  let o; try { o = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch (e) { return null; }
+  if (!o || !o.uid || !o.csrf || !o.created) return null;
+  const t = now() - o.created; if (t < 0 || t > IDLE || t > ABS) return null;
+  return o;
+}
+function otpCodeAt(nid, step) { return String(parseInt(L.hmac(nid + ':' + step).slice(0, 12), 16) % 1000000).padStart(6, '0'); }
+function otpValid(u, code, nid) {
+  if (!STATELESS) return !!u.otp_code && u.otp_expires >= now() && u.otp_code === code;
+  const step = Math.floor(now() / 300e3);
+  return [step, step - 1].some(s => otpCodeAt(nid, s) === code);
+}
 function session(req) {
   const sid = cookies(req).sid; if (!sid) return null;
+  if (STATELESS) {
+    const o = readStateless(sid); if (!o) return null;
+    const u = db.prepare("SELECT * FROM users WHERE id=? AND status='active'").get(o.uid); if (!u) return null;
+    return { s: { csrf: o.csrf, created: o.created, token_hash: L.sha(sid) }, u };
+  }
   const s = db.prepare('SELECT * FROM sessions WHERE token_hash=?').get(L.sha(sid)); if (!s) return null;
   if (now() - s.last > IDLE || now() - s.created > ABS) { db.prepare('DELETE FROM sessions WHERE token_hash=?').run(s.token_hash); return null; }
   const u = db.prepare("SELECT * FROM users WHERE id=? AND status='active'").get(s.user_id); if (!u) return null;
@@ -161,9 +185,12 @@ R('POST', '/api/login', (c) => {
   const u = a.u;
   if (u.status === 'pending') return fail(c.res, 403, u.totp_ok ? 'حساب شما در انتظار تأیید مسئول بالادستی است.' : 'ابتدا تأیید برنامه‌ی احراز هویت را کامل کنید.');
   if (u.status !== 'active') return fail(c.res, 403, 'دسترسی این حساب فعال نیست.');
-  const sid = crypto.randomBytes(32).toString('hex'), csrf = crypto.randomBytes(24).toString('hex');
-  db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
-  db.prepare('INSERT INTO sessions(token_hash,user_id,csrf,created,last,ip) VALUES(?,?,?,?,?,?)').run(L.sha(sid), u.id, csrf, now(), now(), c.ip);
+  const sid = STATELESS ? makeStatelessSession(u) : crypto.randomBytes(32).toString('hex');
+  const csrf = STATELESS ? readStateless(sid).csrf : crypto.randomBytes(24).toString('hex');
+  if (!STATELESS) {
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
+    db.prepare('INSERT INTO sessions(token_hash,user_id,csrf,created,last,ip) VALUES(?,?,?,?,?,?)').run(L.sha(sid), u.id, csrf, now(), now(), c.ip);
+  }
   audit(u.id, 'login', {}, c.ip);
   send(c.res, 200, { ok: true }, { 'Set-Cookie': `sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${SECURE ? '; Secure' : ''}` });
 }, { auth: false });
@@ -173,8 +200,8 @@ R('POST', '/api/otp/send', (c) => {
   if (!nid) return fail(c.res, 400, 'کد ملی نامعتبر است.');
   const u = db.prepare('SELECT * FROM users WHERE nid_hash=?').get(L.hmac(nid));
   if (!u || u.status !== 'active') return fail(c.res, 400, 'حساب فعالی با این کد ملی یافت نشد.');
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  db.prepare('UPDATE users SET otp_code=?, otp_expires=? WHERE id=?').run(code, now() + 5 * 60e3, u.id);
+  const code = STATELESS ? otpCodeAt(nid, Math.floor(now() / 300e3)) : String(Math.floor(100000 + Math.random() * 900000));
+  if (!STATELESS) db.prepare('UPDATE users SET otp_code=?, otp_expires=? WHERE id=?').run(code, now() + 5 * 60e3, u.id);
   audit(u.id, 'otp_send', {}, c.ip);
   // در حالت توسعه، کد در پاسخ برگردانده می‌شود؛ در تولید، کد از طریق پیامک ارسال می‌گردد.
   const dev = process.env.ALLOW_DEV_SECRET === '1' || process.env.NODE_ENV !== 'production';
@@ -187,15 +214,19 @@ R('POST', '/api/otp/verify', (c) => {
   if (!nid || !/^\d{6}$/.test(code)) return fail(c.res, 400, 'کد ملی یا کد یک‌بارمصرف نامعتبر است.');
   const u = db.prepare('SELECT * FROM users WHERE nid_hash=?').get(L.hmac(nid));
   if (!u || u.status !== 'active') return fail(c.res, 401, 'حساب فعالی یافت نشد.');
-  if (!u.otp_code || u.otp_expires < now() || u.otp_code !== code) return fail(c.res, 401, 'کد یک‌بارمصرف نادرست یا منقضی شده است.');
-  db.prepare('UPDATE users SET otp_code=NULL, otp_expires=NULL, fails=0, last_login=? WHERE id=?').run(now(), u.id);
-  const sid = crypto.randomBytes(32).toString('hex'), csrf = crypto.randomBytes(24).toString('hex');
-  db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
-  db.prepare('INSERT INTO sessions(token_hash,user_id,csrf,created,last,ip) VALUES(?,?,?,?,?,?)').run(L.sha(sid), u.id, csrf, now(), now(), c.ip);
+  if (!otpValid(u, code, nid)) return fail(c.res, 401, 'کد یک‌بارمصرف نادرست یا منقضی شده است.');
+  if (!STATELESS) db.prepare('UPDATE users SET otp_code=NULL, otp_expires=NULL, fails=0, last_login=? WHERE id=?').run(now(), u.id);
+  else db.prepare('UPDATE users SET fails=0, last_login=? WHERE id=?').run(now(), u.id);
+  const sid = STATELESS ? makeStatelessSession(u) : crypto.randomBytes(32).toString('hex');
+  const csrf = STATELESS ? readStateless(sid).csrf : crypto.randomBytes(24).toString('hex');
+  if (!STATELESS) {
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
+    db.prepare('INSERT INTO sessions(token_hash,user_id,csrf,created,last,ip) VALUES(?,?,?,?,?,?)').run(L.sha(sid), u.id, csrf, now(), now(), c.ip);
+  }
   audit(u.id, 'login_otp', {}, c.ip);
   send(c.res, 200, { ok: true }, { 'Set-Cookie': `sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${process.env.COOKIE_SECURE !== '0' ? '; Secure' : ''}` });
 }, { auth: false });
-R('POST', '/api/logout', (c) => { db.prepare('DELETE FROM sessions WHERE token_hash=?').run(c.s.token_hash); audit(c.u.id, 'logout', {}, c.ip); send(c.res, 200, { ok: true }, { 'Set-Cookie': 'sid=; Max-Age=0; Path=/' }); });
+R('POST', '/api/logout', (c) => { if (!STATELESS) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(c.s.token_hash); audit(c.u.id, 'logout', {}, c.ip); send(c.res, 200, { ok: true }, { 'Set-Cookie': 'sid=; Max-Age=0; Path=/' }); });
 R('POST', '/api/password', (c) => {
   if (!L.checkPw(String(c.b.old_password || ''), c.u.pw_hash)) return fail(c.res, 403, 'رمز فعلی نادرست است.');
   const pw = String(c.b.new_password || ''); if (!strongPw(pw)) return fail(c.res, 400, 'رمز جدید حداقل ۱۲ کاراکتر و شامل حرف و عدد باشد.');

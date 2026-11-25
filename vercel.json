@@ -2,5 +2,5 @@
   "version": 2,
   "builds": [{ "src": "server.js", "use": "@vercel/node" }],
   "routes": [{ "src": "/(.*)", "dest": "server.js" }],
-  "env": { "DB_FILE": "/tmp/amar-app.db", "ALLOW_DEV_SECRET": "1", "COOKIE_SECURE": "0", "TRUST_PROXY": "1" }
+  "env": { "DB_FILE": "/tmp/amar-app.db", "ALLOW_DEV_SECRET": "1", "COOKIE_SECURE": "0", "TRUST_PROXY": "1", "STATELESS_AUTH": "1" }
 }
