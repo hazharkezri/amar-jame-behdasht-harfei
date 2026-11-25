@@ -172,7 +172,7 @@ const periodSel = (onch) => { const s = h('select', { on: { change: () => { S.pe
 const unitSel = (cur, onch, filter) => { const s = h('select', { on: { change: () => onch(+s.value) } }, S.units.filter(filter || (() => true)).map(u => h('option', { value: u.id, selected: u.id === cur }, '— '.repeat(depth(u)) + u.name))); return s; };
 function depth0(id) { let d = 0, x = S.units.find(y => y.id === id); while (x && x.parent_id && S.units.some(y => y.id === x.parent_id)) { x = S.units.find(y => y.id === x.parent_id); d++; } return d; }
 const depth = (u) => depth0(u.id);
-const CHAIN = [['university', 'دانشگاه'], ['county', 'شهرستان / شبکه'], ['center', 'مرکز خدمات جامع سلامت'], ['base', 'پایگاه سلامت'], ['house', 'خانه بهداشت']];
+const CHAIN = [['university', 'دانشگاه'], ['county', 'شهرستان / شبکه'], ['center', 'مراکز خدمات جامع سلامت شهری/روستایی'], ['base', 'پایگاه سلامت'], ['house', 'خانه بهداشت']];
 function ancestorsOf(id) {
   const out = []; let x = S.units.find(u => u.id === +id);
   while (x) { out.unshift(x.id); x = x.parent_id == null ? null : S.units.find(u => u.id === x.parent_id); }
