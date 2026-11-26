@@ -7,7 +7,7 @@ const mkNid = (base) => { let s = 0; for (let i = 0; i < 9; i++) s += (+base[i])
 const N = { root: '1387140175', mgr: mkNid('123456781'), exA: mkNid('223456782'), exB: mkNid('323456783'), exC: mkNid('423456784'), exD: mkNid('523456785'), bad: '1234567890' };
 for (const k of Object.keys(N)) if (k !== 'bad') assert(L.validNid(N[k]), k);
 assert(!L.validNid(N.bad));
-const out = run('create-root.js', N.root, 'مسئول ستاد', 'root@umsu.ac.ir');
+const out = run('create-root.js', N.root, 'ادمین سامانه', 'root@umsu.ac.ir');
 const rootPw = out.match(/رمز موقت.*?: (\S+)/)[1], rootSecret = out.match(/کلید احراز.*?: (\S+)/)[1];
 console.log(run('seed-urmia.js').trim());
 const { server } = require('../server');

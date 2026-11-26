@@ -60,7 +60,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## ۳. راه‌اندازی اولیه
 
-**الف) ساخت حساب مسئول ستاد** (فقط یک بار):
+**الف) ساخت حساب ادمین سامانه** (فقط یک بار):
 
 ```
 node --no-warnings scripts/create-root.js 1387140175 "نام و نام خانوادگی" name@umsu.ac.ir
