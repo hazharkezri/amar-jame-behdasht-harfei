@@ -66,4 +66,20 @@ try {
   if (hasOld && !hasNew) db.exec('ALTER TABLE sameh_experts RENAME TO imported_experts;');
   if (hasOld && !hasNew) db.exec('DROP INDEX IF EXISTS ix_sameh_expert_unit; CREATE INDEX IF NOT EXISTS ix_imported_expert_unit ON imported_experts(unit_id);');
 } catch (e) {}
+// مهاجرت: گردش کار تایید چندمرحله‌ای و تیک بخش‌ها
+try {
+  const cols = db.prepare("PRAGMA table_info(submissions)").all().map(c => c.name);
+  if (!cols.includes('confirmations')) {
+    tx(() => {
+      db.exec(`CREATE TABLE submissions_v2(period_id INTEGER, unit_id INTEGER, status TEXT NOT NULL CHECK(status IN('draft','submitted','county_approved','approved','returned')),
+        confirmations TEXT NOT NULL DEFAULT '{}',
+        submitted_by INTEGER, submitted_at INTEGER, decided_by INTEGER, decided_at INTEGER, note TEXT,
+        PRIMARY KEY(period_id,unit_id))`);
+      db.exec(`INSERT INTO submissions_v2(period_id,unit_id,status,confirmations,submitted_by,submitted_at,decided_by,decided_at,note)
+        SELECT period_id,unit_id,status,'{}',submitted_by,submitted_at,decided_by,decided_at,note FROM submissions`);
+      db.exec('DROP TABLE submissions');
+      db.exec('ALTER TABLE submissions_v2 RENAME TO submissions');
+    });
+  }
+} catch (e) { console.error('submissions migration failed', e); }
 module.exports = { db, audit, verifyAudit, subtreeIds, inList, tx };

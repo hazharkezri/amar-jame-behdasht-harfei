@@ -23,7 +23,7 @@ const ROLE_FA = { expert_ohs: 'کارشناس بهداشت حرفه‌ای', beh
 const ROLES = ['expert_ohs', 'behvarz', 'expert_ehs', 'responsible_ohs', 'manager_ohs'];
 const MANAGER_ROLES = new Set(['responsible_ohs', 'manager_ohs']);
 const isManagerRole = (r) => MANAGER_ROLES.has(r);
-const STATUS_FA = { draft: 'پیش‌نویس', submitted: 'ارسال‌شده — منتظر تأیید', approved: 'تأییدشده (قفل)', returned: 'برگشت‌خورده برای اصلاح' };
+const STATUS_FA = { draft: 'پیش‌نویس', submitted: 'ارسال‌شده — منتظر تأیید شهرستان', county_approved: 'تأیید شهرستان — منتظر تأیید دانشگاه', approved: 'تأیید نهایی (قفل)', returned: 'برگشت‌خورده برای اصلاح' };
 const KPIS = ['PCT-B', 'PCT-C', 'PCT-D', 'PCT-E', 'PCT-F', 'PCT-H'];
 let TABLES = Object.fromEntries(TAB.tables.map(t => [t.key, t]));
 const CAT_KINDS = ['layout', 'indicators', 'report', 'tables', 'rules'];
@@ -85,7 +85,29 @@ function canDecide(actor, unitId) {
   if (!isManagerRole(actor.role) || !inScope(actor, unitId)) return false;
   return +unitId !== actor.unit_id || isRoot(unitOf(actor.unit_id));
 }
-const getSub = (per, unit) => db.prepare('SELECT * FROM submissions WHERE period_id=? AND unit_id=?').get(per, unit) || { period_id: per, unit_id: unit, status: 'draft' };
+const getSub = (per, unit) => db.prepare('SELECT * FROM submissions WHERE period_id=? AND unit_id=?').get(per, unit) || { period_id: per, unit_id: unit, status: 'draft', confirmations: '{}' };
+function parseConfirmations(s) { try { return JSON.parse(s.confirmations || '{}') || {}; } catch { return {}; } }
+function unitCountyId(unitId) { let u = unitOf(unitId); while (u && u.type !== 'county' && u.parent_id != null) u = unitOf(u.parent_id); return u && u.type === 'county' ? u.id : null; }
+function needsCountyApproval(unitId) { const u = unitOf(unitId); return !!u && u.type !== 'county' && u.type !== 'university' && u.type !== 'country' && !!unitCountyId(unitId); }
+function firstApprovalStatus(unitId) { return 'submitted'; }
+function nextApprovalStatus(unitId, current) {
+  if (current === 'submitted') return needsCountyApproval(unitId) ? 'county_approved' : 'approved';
+  if (current === 'county_approved') return 'approved';
+  return null;
+}
+function canDecideStage(actor, unitId, status) {
+  if (!canDecide(actor, unitId)) return false;
+  if (status === 'submitted') {
+    if (!needsCountyApproval(unitId)) return true;
+    const countyId = unitCountyId(unitId);
+    return !!countyId && inScope(actor, countyId);
+  }
+  if (status === 'county_approved') {
+    const u = unitOf(actor.unit_id);
+    return !!u && (u.type === 'university' || u.type === 'country' || isRoot(u));
+  }
+  return false;
+}
 const editable = (per, unit) => ['draft', 'returned'].includes(getSub(per, unit).status);
 function makeStatelessSession(u) {
   const payload = Buffer.from(JSON.stringify({ uid: u.id, csrf: crypto.randomBytes(24).toString('hex'), created: now() })).toString('base64url');
@@ -658,6 +680,29 @@ R('POST', '/api/profile', (c) => {
   audit(c.u.id, 'profile_update', { t, hide: (c.b.hide || []).length, show: (c.b.show || []).length }, c.ip); send(c.res, 200, { ok: true });
 });
 // --- ارسال، تأیید و قفل
+function requiredBlocks(unit) {
+  const hidden = new Set(db.prepare('SELECT sub_key FROM form_off WHERE unit_type=?').all(unit.type).map(r => r.sub_key));
+  const blks = new Set();
+  let curHidden = false;
+  for (const it of CAT.layout) {
+    if (it.t === 'sub') { curHidden = hidden.has(it.key); continue; }
+    if (it.t === 'ind' && IND[it.id] && !curHidden) blks.add(IND[it.id].blk);
+  }
+  for (const t of TAB.tables) blks.add('TX-' + t.key);
+  return [...blks];
+}
+R('POST', '/api/submit/confirmations', (c) => {
+  const per = db.prepare('SELECT * FROM periods WHERE id=?').get(+c.b.period), unit = +c.b.unit || c.u.unit_id;
+  if (!per || per.status !== 'open') return fail(c.res, 400, 'این دوره بسته است.');
+  if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!editable(per.id, unit)) return fail(c.res, 400, 'بعد از ارسال قابل تغییر نیست.');
+  const conf = (c.b.confirmations && typeof c.b.confirmations === 'object') ? c.b.confirmations : {};
+  const clean = {};
+  for (const k of requiredBlocks(unitOf(unit))) clean[k] = !!conf[k];
+  db.prepare("INSERT INTO submissions(period_id,unit_id,status,confirmations) VALUES(?,?,'draft',?) ON CONFLICT(period_id,unit_id) DO UPDATE SET confirmations=excluded.confirmations")
+    .run(per.id, unit, JSON.stringify(clean));
+  send(c.res, 200, { ok: true, confirmations: clean });
+});
 R('POST', '/api/submit', (c) => {
   const per = db.prepare('SELECT * FROM periods WHERE id=?').get(+c.b.period), unit = +c.b.unit || c.u.unit_id;
   if (!per || per.status !== 'open') return fail(c.res, 400, 'این دوره بسته است.');
@@ -665,24 +710,31 @@ R('POST', '/api/submit', (c) => {
   if (!editable(per.id, unit)) return fail(c.res, 400, 'اطلاعات قبلاً ارسال شده است.');
   const vals = numVals(per.id, unit);
   if (!Object.values(vals).some(v => v > 0)) return fail(c.res, 400, 'هنوز هیچ آماری ثبت نشده است.');
+  const req = requiredBlocks(unitOf(unit));
+  const conf = parseConfirmations(getSub(per.id, unit));
+  const missing = req.filter(k => !conf[k]);
+  if (missing.length) return fail(c.res, 400, 'قبل از ارسال، همه بخش‌ها باید بررسی و تیک تأیید شوند.', { missing });
   const w = checkRules(vals);
-  if (w.length && !c.b.ack) return fail(c.res, 409, 'قبل از ارسال، هشدارهای منطقی را بررسی کنید.', { warnings: w });
-  db.prepare("INSERT INTO submissions(period_id,unit_id,status,submitted_by,submitted_at,note) VALUES(?,?,'submitted',?,?,NULL) ON CONFLICT(period_id,unit_id) DO UPDATE SET status='submitted',submitted_by=excluded.submitted_by,submitted_at=excluded.submitted_at,note=NULL")
-    .run(per.id, unit, c.u.id, now());
+  if (w.length) return fail(c.res, 409, 'خطاهای منطقی باید قبل از ارسال برطرف شوند.', { warnings: w });
+  db.prepare("INSERT INTO submissions(period_id,unit_id,status,confirmations,submitted_by,submitted_at,note) VALUES(?,?,'submitted',?,?,?,NULL) ON CONFLICT(period_id,unit_id) DO UPDATE SET status='submitted',submitted_by=excluded.submitted_by,submitted_at=excluded.submitted_at,note=NULL")
+    .run(per.id, unit, JSON.stringify(conf), c.u.id, now());
   audit(c.u.id, 'submit', { period: per.id, unit, warnings: w.length }, c.ip); send(c.res, 200, { ok: true });
 });
 R('POST', '/api/submit/withdraw', (c) => {
   const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
-  const s = getSub(+c.b.period, unit); if (s.status !== 'submitted') return fail(c.res, 400, 'فقط ارسال‌های منتظر تأیید قابل پس‌گرفتن هستند.');
-  db.prepare("UPDATE submissions SET status='draft' WHERE period_id=? AND unit_id=?").run(s.period_id, s.unit_id); audit(c.u.id, 'withdraw', { period: s.period_id, unit }, c.ip); send(c.res, 200, { ok: true });
+  const s = getSub(+c.b.period, unit); if (s.status !== 'submitted') return fail(c.res, 400, 'فقط ارسال‌های منتظر تأیید اولیه قابل پس‌گرفتن هستند.');
+  db.prepare("UPDATE submissions SET status='draft',note=NULL WHERE period_id=? AND unit_id=?").run(s.period_id, s.unit_id); audit(c.u.id, 'withdraw', { period: s.period_id, unit }, c.ip); send(c.res, 200, { ok: true });
 });
 R('GET', '/api/approvals', (c) => {
   if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const per = +c.q.period, ids = scopeOf(c.u).filter(i => canDecide(c.u, i));
   if (!ids.length) return send(c.res, 200, []);
-  const out = db.prepare(`SELECT u.id unit_id,u.name,u.type,COALESCE(s.status,'draft') status,s.submitted_at,s.decided_at,s.note,(SELECT COUNT(*) FROM entries e WHERE e.period_id=? AND e.unit_id=u.id) filled
+  const out = db.prepare(`SELECT u.id unit_id,u.name,u.type,COALESCE(s.status,'draft') status,s.confirmations,s.submitted_at,s.decided_at,s.note,(SELECT COUNT(*) FROM entries e WHERE e.period_id=? AND e.unit_id=u.id) filled
     FROM units u LEFT JOIN submissions s ON s.unit_id=u.id AND s.period_id=? WHERE u.id IN (${inList(ids)}) ORDER BY u.id`).all(per, per, ...ids);
-  for (const r of out) r.warnings = r.status === 'submitted' ? checkRules(numVals(per, r.unit_id)).length : 0;
+  for (const r of out) {
+    r.canDecide = ['submitted', 'county_approved'].includes(r.status) && canDecideStage(c.u, r.unit_id, r.status);
+    r.warnings = ['submitted', 'county_approved'].includes(r.status) ? checkRules(numVals(per, r.unit_id)).length : 0;
+  }
   send(c.res, 200, out);
 });
 R('POST', '/api/approvals/decide', (c) => {
@@ -690,11 +742,22 @@ R('POST', '/api/approvals/decide', (c) => {
   if (!per || per.status !== 'open') return fail(c.res, 400, 'این دوره بسته است.');
   if (!canDecide(c.u, unit)) return fail(c.res, 403, 'اجازه ندارید.');
   const s = getSub(per.id, unit);
-  if (act === 'approve') { if (s.status !== 'submitted') return fail(c.res, 400, 'این واحد در انتظار تأیید نیست.'); }
-  else if (act === 'return') { if (!['submitted', 'approved'].includes(s.status)) return fail(c.res, 400, 'قابل برگشت نیست.'); if (!note) return fail(c.res, 400, 'علت برگشت را بنویسید.'); }
-  else return fail(c.res, 400, 'عملیات نامعتبر.');
-  db.prepare('UPDATE submissions SET status=?,decided_by=?,decided_at=?,note=? WHERE period_id=? AND unit_id=?').run(act === 'approve' ? 'approved' : 'returned', c.u.id, now(), note || null, per.id, unit);
-  audit(c.u.id, 'decision_' + act, { period: per.id, unit, note }, c.ip); send(c.res, 200, { ok: true });
+  if (act === 'approve') {
+    if (!['submitted', 'county_approved'].includes(s.status)) return fail(c.res, 400, 'این واحد در انتظار تأیید نیست.');
+    if (!canDecideStage(c.u, unit, s.status)) return fail(c.res, 403, 'تأیید این مرحله در سطح شما مجاز نیست.');
+    const w = checkRules(numVals(per.id, unit));
+    if (w.length) return fail(c.res, 409, 'قبل از تأیید، خطاهای منطقی باید برطرف شوند.', { warnings: w });
+    const ns = nextApprovalStatus(unit, s.status);
+    db.prepare('UPDATE submissions SET status=?,decided_by=?,decided_at=?,note=NULL WHERE period_id=? AND unit_id=?').run(ns, c.u.id, now(), per.id, unit);
+    audit(c.u.id, 'decision_approve', { period: per.id, unit, from: s.status, to: ns }, c.ip); return send(c.res, 200, { ok: true, status: ns });
+  }
+  if (act === 'return') {
+    if (!['submitted', 'county_approved', 'approved'].includes(s.status)) return fail(c.res, 400, 'قابل برگشت نیست.');
+    if (!note) return fail(c.res, 400, 'علت برگشت را بنویسید.');
+    db.prepare('UPDATE submissions SET status=?,decided_by=?,decided_at=?,note=? WHERE period_id=? AND unit_id=?').run('returned', c.u.id, now(), note, per.id, unit);
+    audit(c.u.id, 'decision_return', { period: per.id, unit, from: s.status, note }, c.ip); return send(c.res, 200, { ok: true, status: 'returned' });
+  }
+  return fail(c.res, 400, 'عملیات نامعتبر.');
 });
 R('DELETE', '/api/submissions', (c) => {
   const per = db.prepare('SELECT * FROM periods WHERE id=?').get(+c.b.period), unit = +c.b.unit || c.u.unit_id;
@@ -709,7 +772,13 @@ R('GET', '/api/inbox', (c) => {
   const per = (db.prepare("SELECT id FROM periods WHERE status='open' ORDER BY id DESC LIMIT 1").get() || {}).id;
   if (per) { const s = getSub(per, c.u.unit_id); o.status = s.status; if (s.status === 'returned') { o.returned = 1; o.note = s.note; } o.period = per; }
   if (isManagerRole(c.u.role)) {
-    if (per) { const ids = scopeOf(c.u).filter(i => canDecide(c.u, i)); if (ids.length) o.pendingApprovals = db.prepare(`SELECT COUNT(*) n FROM submissions WHERE period_id=? AND status='submitted' AND unit_id IN (${inList(ids)})`).get(per, ...ids).n; }
+    if (per) {
+      const ids = scopeOf(c.u).filter(i => canDecide(c.u, i));
+      if (ids.length) {
+        const rows = db.prepare(`SELECT unit_id,status FROM submissions WHERE period_id=? AND status IN ('submitted','county_approved') AND unit_id IN (${inList(ids)})`).all(per, ...ids);
+        o.pendingApprovals = rows.filter(r => canDecideStage(c.u, r.unit_id, r.status)).length;
+      }
+    }
     const ids = scopeOf(c.u); o.pendingUsers = db.prepare(`SELECT COUNT(*) n FROM users WHERE status='pending' AND totp_ok=1 AND unit_id IN (${inList(ids)})`).get(...ids).n;
   }
   send(c.res, 200, o);
@@ -741,7 +810,7 @@ R('GET', '/api/dashboard', (c) => {
   const pick = (r) => Object.fromEntries(KPIS.map(k => [k, r[k]]));
   const total = pick(computeReport(sums(per, unit, only)));
   const prev = db.prepare('SELECT id,label FROM periods WHERE id<? ORDER BY id DESC LIMIT 1').get(per);
-  const status = { draft: 0, submitted: 0, approved: 0, returned: 0 };
+  const status = { draft: 0, submitted: 0, county_approved: 0, approved: 0, returned: 0 };
   const rows = kids.map(k => { const s = getSub(per, k.id).status; status[s]++; return { id: k.id, name: k.name, status: s, filled: db.prepare('SELECT COUNT(*) n FROM entries WHERE period_id=? AND unit_id=?').get(per, k.id).n, kpi: pick(computeReport(sums(per, k.id, only))) }; });
   send(c.res, 200, { unit: unitOf(unit), total, prev: prev ? { label: prev.label, kpi: pick(computeReport(sums(prev.id, unit, only))) } : null, status, rows, kpis: KPIS.map(k => ({ code: k, title: (REP.find(r => r.code === k) || {}).title })) });
 });

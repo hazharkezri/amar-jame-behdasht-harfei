@@ -237,11 +237,12 @@ function cascadeSel(cur, onch) {
 
 // ================= ورود آمار =================
 async function viewEntry() {
-  const st = { unit: S.me.unit_id, blk: sessionStorageGet('blk') || BLOCKS[0].blk, V: {}, sub: {}, hidden: new Set(), warnEl: null };
-  const loadUnit = async (u) => { st.unit = u; const [en_, pf] = await Promise.all([api('GET', `/api/entries?period=${S.per}&unit=${u}`), api('GET', '/api/profile')]); if (en_.s !== 200) { $view.append(msg('err', en_.j.error || 'خطا')); return false; } st.V = en_.j.values; st.sub = en_.j.submission; st.hidden = new Set(pf.j.hidden || []); return true; };
+  const parseConf = (c) => { try { return JSON.parse(c || '{}') || {}; } catch { return {}; } };
+  const st = { unit: S.me.unit_id, blk: sessionStorageGet('blk') || BLOCKS[0].blk, V: {}, sub: {}, conf: {}, hidden: new Set(), warnEl: null };
+  const loadUnit = async (u) => { st.unit = u; const [en_, pf] = await Promise.all([api('GET', `/api/entries?period=${S.per}&unit=${u}`), api('GET', '/api/profile')]); if (en_.s !== 200) { $view.append(msg('err', en_.j.error || 'خطا')); return false; } st.V = en_.j.values; st.sub = en_.j.submission; st.conf = parseConf(st.sub.confirmations); st.hidden = new Set(pf.j.hidden || []); return true; };
   if (!(await loadUnit(st.unit))) return;
   const per = S.periods.find(p => p.id === S.per) || { status: 'closed', label: '' };
-  const locked = per.status !== 'open' || ['submitted', 'approved'].includes(st.sub.status);
+  const locked = per.status !== 'open' || ['submitted', 'county_approved', 'approved'].includes(st.sub.status);
   // اعمال صف آفلاین روی نمایش
   for (const q of qGet()) if (q.period === S.per && (q.unit || S.me.unit_id) === st.unit) st.V[q.ind] = q.value;
   const head = h('div'), pills = h('div', { class: 'pills' }), body = h('div'), warn = h('div', { class: 'warnbox' });
@@ -252,24 +253,32 @@ async function viewEntry() {
     clear(head); const s = st.sub.status || 'draft';
     head.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('div', {}, h('h1', {}, 'ورود آمار — ', (S.units.find(u=>u.id===st.unit)||{}).name || S.me.unit.name), h('div', {}, 'وضعیت: ', h('span', { class: 'st ' + s }, S.cat.statusFa[s]))), h('div', { class: 'row' }, isMgrRole(S.me.role) ? cascadeSel(st.unit, (v) => { loadUnit(v).then(() => { drawHead(); drawPills(); drawBody(); drawWarn(); }); }) : null, h('span', {}, 'دوره: '), periodSel(() => renderShell()))),
       s === 'returned' && st.sub.note ? msg('warn', 'برگشت از مسئول: ' + st.sub.note) : null,
-      s === 'approved' ? msg('ok', 'آمار این دوره تأیید و قفل شده است. برای اصلاح، مسئول بالادستی باید آن را برگشت دهد.') : null,
-      s === 'submitted' ? h('div', {}, msg('info', 'آمار ارسال شد و منتظر تأیید است؛ ویرایش قفل است.'), h('button', { class: 'b sec sm', on: { click: async () => { const r = await api('POST', '/api/submit/withdraw', { period: S.per, unit: st.unit }); if (r.s === 200) renderShell(); else toast(r.j.error); } } }, 'پس‌گرفتن ارسال برای اصلاح')) : null,
+      s === 'approved' ? msg('ok', 'آمار این دوره تأیید نهایی و قفل شده است. برای اصلاح، مسئول بالادستی باید آن را برگشت دهد.') : null,
+      s === 'submitted' ? h('div', {}, msg('info', 'آمار ارسال شد و منتظر تأیید مسئول شهرستان است؛ ویرایش قفل است.'), h('button', { class: 'b sec sm', on: { click: async () => { const r = await api('POST', '/api/submit/withdraw', { period: S.per, unit: st.unit }); if (r.s === 200) renderShell(); else toast(r.j.error); } } }, 'پس‌گرفتن ارسال برای اصلاح')) : null,
+      s === 'county_approved' ? msg('ok', 'آمار در سطح شهرستان تأیید شده و منتظر تأیید نهایی دانشگاه است.') : null,
+      (!locked ? (() => { const miss = reqBlocks().filter(k => !st.conf[k]).length; const ws = warnings(Object.fromEntries(Object.entries(st.V).map(([k, v]) => [k, Number(en(v)) || 0]))).length; if (!miss && !ws) return msg('ok', 'همه بخش‌ها تأیید شده‌اند و خطای منطقی فعالی دیده نشد.'); return msg(miss || ws ? 'warn' : 'ok', `وضعیت ارسال: ${fa(reqBlocks().length - miss)} از ${fa(reqBlocks().length)} بخش تأیید شده، ${fa(ws)} خطای منطقی.`); })() : null),
       per.status !== 'open' ? (S.periods.length
         ? msg('warn', (per.label ? `دوره‌ی «${per.label}» بسته است.` : 'این دوره بسته است.') + (isMgrRole(S.me.role) ? ' برای ورود آمار، از بخش «مدیریت ستاد» آن را باز کنید.' : ' برای ورود آمار باید دوره باز شود.'))
         : msg('warn', 'هنوز هیچ دوره‌ی آماری تعریف نشده است؛ به همین دلیل ورود آمار غیرفعال است.' + (isMgrRole(S.me.role) ? ' از بخش «مدیریت ستاد» یک دوره بسازید.' : ''))) : null,
       h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => download(`/api/export.xlsx?period=${S.per}&unit=${st.unit}`, 'آمار.xlsx') } }, 'خروجی اکسل'), locked ? null : h('button', { class: 'b sec sm', on: { click: () => importDlg(st.unit) } }, 'درون‌ریزی از اکسل'),
-        locked ? null : h('button', { class: 'b', on: { click: submitDlg } }, 'ارسال برای تأیید'))));
+        locked ? null : h('button', { class: 'b' + (allConfirmed() ? '' : ' sec'), on: { click: submitDlg }, title: allConfirmed() ? 'ارسال برای تأیید' : 'ابتدا همه بخش‌ها را تیک تأیید کنید' }, allConfirmed() ? 'ارسال برای تأیید' : `ارسال (${fa(reqBlocks().filter(k => st.conf[k]).length)}/${fa(reqBlocks().length)} بخش تأیید)`))));
   };
-  const drawPills = () => { clear(pills); for (const b of BLOCKS) { const p = prog(b); if (!b.tables && !visibleInds(b).length && b.subs.every(s => st.hidden.has(s.key))) continue; pills.append(h('button', { class: 'pill' + (b.blk === st.blk ? ' on' : ''), on: { click: () => { st.blk = b.blk; sessionStorageSet('blk', b.blk); drawPills(); drawBody(); } } }, b.title.replace(/^بخش\s*\S+\s*—\s*/, ''), h('span', { class: 'pr' }, b.tables ? 'جدول تکمیلی' : fa(p) + '٪ تکمیل'))); } };
+  const reqBlocks = () => BLOCKS.filter(b => b.tables || visibleInds(b).length || !b.subs.every(s => st.hidden.has(s.key))).map(b => b.blk);
+  const allConfirmed = () => reqBlocks().every(k => st.conf[k]);
+  const saveConf = async () => { if (locked) return; const r = await api('POST', '/api/submit/confirmations', { period: S.per, unit: st.unit, confirmations: st.conf }); if (r.s === 200) st.conf = r.j.confirmations || st.conf; else toast(r.j.error || 'ذخیره تأیید بخش انجام نشد'); };
+  const drawPills = () => { clear(pills); for (const b of BLOCKS) { const p = prog(b); if (!b.tables && !visibleInds(b).length && b.subs.every(s => st.hidden.has(s.key))) continue; const ok = !!st.conf[b.blk]; pills.append(h('button', { class: 'pill' + (b.blk === st.blk ? ' on' : '') + (ok ? ' ok' : ''), on: { click: () => { st.blk = b.blk; sessionStorageSet('blk', b.blk); drawPills(); drawBody(); } } }, ok ? '✓ ' : '', b.title.replace(/^بخش\s*\S+\s*—\s*/, ''), h('span', { class: 'pr' }, b.tables ? (ok ? 'تأیید شد' : 'جدول تکمیلی') : fa(p) + '٪ تکمیل'))); } };
   const rowEls = {};
   const drawBody = () => {
     clear(body); const b = BLOCKS.find(x => x.blk === st.blk); body.append(h('h2', {}, b.title));
+    const confBox = h('label', { class: 'chk confirm' }, h('input', { type: 'checkbox', checked: !!st.conf[b.blk], disabled: locked, on: { change: async (e) => { st.conf[b.blk] = e.target.checked; await saveConf(); drawPills(); drawHead(); drawBody(); } } }), h('span', {}, st.conf[b.blk] ? 'این بخش بررسی و تأیید شد ✓' : 'این بخش را بررسی کردم و تأیید میکنم'));
     if (b.tables) {
       body.append(h('div', { class: 'msg info' }, 'این جدول تکمیلی فایل ۲، دادهی پایهی واحد است و برخلاف شاخصها به دورهی آماری وابسته نیست. ویرایش و ذخیره بلافاصله اعمال میشود و در گزارش حسابرسی ثبت میگردد.'));
+      body.append(confBox);
       const wrap = h('div'); body.append(wrap);
       recordEditor({ t: b.tableKey || (S.cat.tables[0] || {}).key, unit: st.unit, q: '', off: 0, single: true }, wrap);
       return;
     }
+    body.append(confBox);
     let first = true;
     for (const sub of b.subs) {
       if (st.hidden.has(sub.key)) continue;
@@ -313,20 +322,23 @@ async function viewEntry() {
     for (const el of document.querySelectorAll('.ind.w')) el.classList.remove('w');
     clear(warn); if (!w.length) return;
     for (const x of w) for (const id of [x.a]) if (rowEls[id]) rowEls[id].classList.add('w');
-    warn.append(h('div', { class: 'msg warn' }, h('b', {}, `${fa(w.length)} هشدار منطقی: `), 'مقدارها را دوباره بررسی کنید (مانع ذخیره نیست). ', h('details', {}, h('summary', {}, 'نمایش'), h('ul', {}, w.map(x => h('li', {}, h('a', { href: '#', on: { click: (e) => { e.preventDefault(); const b = BLOCKS.find(bb => bb.subs.some(s => s.inds.includes(x.a))); if (b && b.blk !== st.blk) { st.blk = b.blk; drawPills(); drawBody(); } const el = document.getElementById('r-' + x.a); if (el) { const dt = el.closest('details'); if (dt) dt.open = true; el.scrollIntoView({ block: 'center' }); } } } }, warnText(x)))))))); }
+    warn.append(h('div', { class: 'msg err' }, h('b', {}, `${fa(w.length)} خطای منطقی: `), 'این موارد باید قبل از ارسال برطرف شوند. ', h('details', { open: true }, h('summary', {}, 'نمایش خطاها'), h('ul', {}, w.map(x => h('li', {}, h('a', { href: '#', on: { click: (e) => { e.preventDefault(); const b = BLOCKS.find(bb => bb.subs.some(s => s.inds.includes(x.a))); if (b && b.blk !== st.blk) { st.blk = b.blk; drawPills(); drawBody(); } const el = document.getElementById('r-' + x.a); if (el) { const dt = el.closest('details'); if (dt) dt.open = true; el.scrollIntoView({ block: 'center' }); } } } }, warnText(x)))))))); }
   async function histDlg(id) {
     const r = await api('GET', `/api/history?period=${S.per}&ind=${encodeURIComponent(id)}&unit=${st.unit}`);
     modal('تاریخچه‌ی تغییرات', h('div', {}, h('p', { class: 'mut' }, IND[id].title), r.j.length ? h('table', { class: 'tbl' }, h('tr', {}, h('th', {}, 'زمان'), h('th', {}, 'کاربر'), h('th', {}, 'قبلی'), h('th', {}, 'جدید')), r.j.map(x => h('tr', {}, h('td', {}, when(x.ts)), h('td', {}, x.full_name), h('td', {}, fa(x.old ?? '—')), h('td', {}, fa(x.new || '(پاک شد)'))))) : 'تغییری ثبت نشده.'));
   }
   async function submitDlg() {
     await qFlush();
+    if (!allConfirmed()) { toast('ابتدا همه بخش‌ها را بررسی و تیک تأیید کنید.'); return; }
     const r = await api('POST', '/api/submit', { period: S.per, unit: st.unit });
     if (r.s === 200) { toast('ارسال شد ✓'); return renderShell(); }
     if (r.s === 409) {
-      const ck = h('input', { type: 'checkbox' }), go = h('button', { class: 'b', disabled: true, on: { click: async () => { const r2 = await api('POST', '/api/submit', { period: S.per, unit: st.unit, ack: true }); if (r2.s === 200) { m.remove(); toast('ارسال شد ✓'); renderShell(); } else toast(r2.j.error); } } }, 'ارسال با وجود هشدارها');
-      ck.addEventListener('change', () => { go.disabled = !ck.checked; });
-      const m = modal('هشدارهای منطقی', h('div', {}, msg('warn', 'پیش از ارسال، این موارد را بررسی کنید. اگر مقدارها درست است (مثلاً به‌دلیل شرایط خاص)، با تیک زیر ارسال کنید.'), h('ul', {}, warnings(Object.fromEntries(Object.entries(st.V).map(([k, v]) => [k, Number(en(v)) || 0]))).map(w => h('li', {}, warnText(w)))), h('label', { class: 'chk' }, ck, 'مقدارها را بررسی کرده‌ام و صحیح است'), go));
-    } else toast(r.j.error || 'ارسال نشد');
+      const ws = r.j.warnings || warnings(Object.fromEntries(Object.entries(st.V).map(([k, v]) => [k, Number(en(v)) || 0])));
+      modal('خطاهای منطقی — قبل از ارسال برطرف کنید', h('div', {}, msg('err', 'این موارد باید اصلاح شوند؛ ارسال تا رفع خطا ممکن نیست.'), h('ul', {}, ws.map(w => h('li', {}, warnText(w))))));
+      return;
+    }
+    if (r.s === 400 && r.j.missing) { toast('بخش‌های تأییدنشده باقی مانده است.'); drawPills(); drawBody(); return; }
+    toast(r.j.error || 'ارسال نشد');
   }
   drawHead(); drawPills(); drawBody(); drawWarn();
 }
@@ -414,16 +426,16 @@ async function viewDash() {
     const back = d.unit.parent_id && S.units.some(u => u.id === d.unit.parent_id) ? h('button', { class: 'b sec sm', on: { click: () => { st.unit = d.unit.parent_id; load(); } } }, '↑ بالاتر') : null;
     box.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h1', {}, 'داشبورد — ', d.unit.name), h('div', { class: 'row' }, back, periodSel(() => renderShell()))),
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: st.only, on: { change: (e) => { st.only = e.target.checked; load(); } } }), 'فقط واحدهای تأییدشده محاسبه شود'),
-      h('div', { class: 'row' }, ['approved', 'submitted', 'returned', 'draft'].map(k => h('span', { class: 'st ' + k }, `${ST[k].split('—')[0]}: ${fa(d.status[k])}`)))));
+      h('div', { class: 'row' }, ['approved', 'county_approved', 'submitted', 'returned', 'draft'].map(k => h('span', { class: 'st ' + k }, `${(ST[k]||k).split('—')[0]}: ${fa(d.status[k]||0)}`)))));
     const kp = h('div', { class: 'kpis' }, d.kpis.map(k => { const v = d.total[k.code], pv = d.prev ? d.prev.kpi[k.code] : null, df = (pv !== null && v !== null && pv !== undefined) ? v - pv : null;
       return h('div', { class: 'kpi' + (k.code === st.kpi ? ' on' : ''), tabindex: 0, role: 'button', on: { click: () => { st.kpi = k.code; load(); } } }, h('b', {}, v === null || v === undefined ? '—' : fa(v) + '٪'), h('span', {}, k.title), df !== null ? h('i', { class: df >= 0 ? 'up' : 'dn' }, (df >= 0 ? '▲ ' : '▼ ') + fa(Math.abs(Math.round(df * 100) / 100)) + ' نسبت به ' + d.prev.label) : null); }));
     box.append(h('div', { class: 'card' }, kp));
     const rows = d.rows.map(x => ({ ...x, v: x.kpi[st.kpi] })).sort((a, b) => (b.v ?? -1) - (a.v ?? -1));
     const W = 420, BH = 26, H = rows.length * BH + 10, svgEl = svg('svg', { class: 'bars', direction: 'ltr', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': kt[st.kpi] });
     const mx = Math.max(100, ...rows.map(r => r.v || 0));
-    rows.forEach((r, i) => { const y = 5 + i * BH, w = r.v ? (r.v / mx) * 220 : 0, col = r.status === 'approved' ? '#0f8a79' : r.status === 'submitted' ? '#3b82f6' : '#9ca3af';
+    rows.forEach((r, i) => { const y = 5 + i * BH, w = r.v ? (r.v / mx) * 220 : 0, col = r.status === 'approved' ? '#0f8a79' : r.status === 'county_approved' ? '#0ea5e9' : r.status === 'submitted' ? '#3b82f6' : '#9ca3af';
       svgEl.append(svg('text', { x: W - 4, y: y + 17, 'text-anchor': 'end', 'font-size': 12, fill: '#17302c' }, r.name), svg('rect', { x: W - 100 - w, y: y + 3, width: Math.max(w, 1), height: 18, rx: 3, fill: col }), svg('text', { x: W - 104 - w, y: y + 17, 'text-anchor': 'end', 'font-size': 12, fill: '#5d7570' }, r.v === null || r.v === undefined ? '—' : fa(r.v) + '٪')); });
-    box.append(h('div', { class: 'card' }, h('h2', {}, kt[st.kpi]), h('p', { class: 'mut' }, 'رنگ: سبز = تأییدشده، آبی = منتظر تأیید، خاکستری = پیش‌نویس/برگشتی'), svgEl,
+    box.append(h('div', { class: 'card' }, h('h2', {}, kt[st.kpi]), h('p', { class: 'mut' }, 'رنگ: سبز = تأیید نهایی، فیروزه‌ای = تأیید شهرستان، آبی = منتظر تأیید، خاکستری = پیش‌نویس/برگشتی'), svgEl,
       h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, h('th', {}, 'واحد'), h('th', {}, 'وضعیت'), h('th', {}, 'شاخص‌های پرشده'), d.kpis.map(k => h('th', {}, k.title))),
         d.rows.map(x => h('tr', {}, h('td', { class: 'l' }, S.units.some(u => u.parent_id === x.id) ? h('a', { href: '#', on: { click: (e) => { e.preventDefault(); st.unit = x.id; load(); } } }, x.name) : x.name), h('td', {}, h('span', { class: 'st ' + x.status }, ST[x.status].split('—')[0])), h('td', {}, fa(x.filled)), d.kpis.map(k => h('td', {}, x.kpi[k.code] === null ? '—' : fa(x.kpi[k.code])))))))));
   }
@@ -466,9 +478,9 @@ async function viewAppr() {
   box.append(h('div', { class: 'row sp' }, h('h1', {}, 'تأیید ارسال‌ها'), periodSel(() => renderShell())), h('div', {}, r.j.length ? null : h('p', { class: 'mut' }, 'واحدی برای تأیید در محدوده‌ی شما نیست.')),
     h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['واحد', 'وضعیت', 'خانه‌های پرشده', 'هشدار', 'زمان ارسال', ''].map(x => h('th', {}, x))),
       r.j.map(x => h('tr', {}, h('td', { class: 'l' }, x.name), h('td', {}, h('span', { class: 'st ' + x.status }, ST[x.status].split('—')[0])), h('td', {}, fa(x.filled)), h('td', {}, x.warnings ? fa(x.warnings) : '—'), h('td', {}, when(x.submitted_at)),
-        h('td', {}, h('div', { class: 'row' }, x.filled ? h('button', { class: 'b sm sec', on: { click: () => viewUnit(x) } }, 'مشاهده') : null, x.status === 'submitted' && per.status === 'open' ? h('button', { class: 'b sm', on: { click: () => decide(x, 'approve') } }, 'تأیید') : null, ['submitted', 'approved'].includes(x.status) && per.status === 'open' ? h('button', { class: 'b sm red', on: { click: () => decide(x, 'return') } }, 'برگشت') : null, x.status !== 'draft' && per.status === 'open' ? h('button', { class: 'b sm red', title: 'حذف وضعیت ارسال و بازگشت به پیشنویس', on: { click: async () => { if (!confirm(`ارسال واحد «${x.name}» حذف شود و دوباره پیشنویس گردد؟`)) return; const r2 = await api('DELETE', '/api/submissions', { period: S.per, unit: x.unit_id }); if (r2.s === 200) renderShell(); else toast(r2.j.error); } } }, 'حذف ارسال') : null)))))));
+        h('td', {}, h('div', { class: 'row' }, x.filled ? h('button', { class: 'b sm sec', on: { click: () => viewUnit(x) } }, 'مشاهده') : null, x.canDecide && per.status === 'open' ? h('button', { class: 'b sm', on: { click: () => decide(x, 'approve') } }, 'تأیید مرحله') : null, ['submitted', 'county_approved', 'approved'].includes(x.status) && per.status === 'open' && isMgrRole(S.me.role) ? h('button', { class: 'b sm red', on: { click: () => decide(x, 'return') } }, 'برگشت') : null, x.status !== 'draft' && per.status === 'open' && isMgrRole(S.me.role) ? h('button', { class: 'b sm red', title: 'حذف وضعیت ارسال و بازگشت به پیشنویس', on: { click: async () => { if (!confirm(`ارسال واحد «${x.name}» حذف شود و دوباره پیشنویس گردد؟`)) return; const r2 = await api('DELETE', '/api/submissions', { period: S.per, unit: x.unit_id }); if (r2.s === 200) renderShell(); else toast(r2.j.error); } } }, 'حذف ارسال') : null)))))));
   async function decide(x, act) {
-    if (act === 'approve') { if (x.warnings && !confirm(`${x.name} دارای ${fa(x.warnings)} هشدار منطقی است. با این حال تأیید شود؟`)) return; const r2 = await api('POST', '/api/approvals/decide', { period: S.per, unit: x.unit_id, action: 'approve' }); if (r2.s === 200) renderShell(); else toast(r2.j.error); return; }
+    if (act === 'approve') { if (x.warnings) { toast('ابتدا خطاهای منطقی این واحد باید برطرف شود.'); return; } const r2 = await api('POST', '/api/approvals/decide', { period: S.per, unit: x.unit_id, action: 'approve' }); if (r2.s === 200) { toast(r2.j.status === 'approved' ? 'تأیید نهایی شد ✓' : 'تأیید مرحله ثبت شد ✓'); renderShell(); } else toast(r2.j.error || 'خطا'); return; }
     const note = h('textarea', { rows: 3, placeholder: 'علت برگشت (الزامی)' }), out = h('div');
     const m = modal('برگشت برای اصلاح — ' + x.name, h('div', {}, note, out, h('button', { class: 'b red', on: { click: async () => { const r2 = await api('POST', '/api/approvals/decide', { period: S.per, unit: x.unit_id, action: 'return', note: note.value }); if (r2.s === 200) { m.remove(); renderShell(); } else out.append(msg('err', r2.j.error)); } } }, 'برگشت دادن')));
   }

@@ -452,8 +452,15 @@ main {
 }
 .st.draft { background: #f1f5f9; color: #475569; border-color: var(--bd); }
 .st.submitted { background: var(--info-bg); color: var(--info); border-color: #bfdbfe; }
+.st.county_approved { background: #ecfeff; color: #0e7490; border-color: #a5f3fc; }
 .st.approved { background: var(--ok-bg); color: var(--ok); border-color: #bbf7d0; }
 .st.returned { background: var(--warn-bg); color: var(--warn); border-color: #fde68a; }
+.pill.ok { border-color: #86efac; background: #f0fdf4; color: #166534; }
+.pill.ok .pr { color: #166534; }
+.pill.on.ok { background: linear-gradient(135deg, #15803d 0%, #16a34a 100%); color: #fff; border-color: #15803d; }
+.pill.on.ok .pr { color: rgba(255,255,255,.95); }
+.chk.confirm { display: flex; gap: .6rem; align-items: center; padding: .75rem 1rem; margin: .5rem 0 1rem; border: 1px solid #bbf7d0; background: #f0fdf4; border-radius: 12px; font-weight: 600; color: #166534; }
+.chk.confirm input { width: 1.1rem; height: 1.1rem; }
 
 /* ---------- بخش‌های جمع‌شونده ---------- */
 details.sub {

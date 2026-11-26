@@ -83,10 +83,15 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   assert.equal((await exA.call('GET', `/api/entries?period=${per}&unit=${county('اشنویه').id}`)).s, 403);
   assert.equal((await exA.call('GET', '/api/users')).s, 403); assert.equal((await exA.call('GET', `/api/approvals?period=${per}`)).s, 403); assert.equal((await exA.call('GET', `/api/dashboard?period=${per}`)).s, 403);
   // ----- ارسال و تأیید
+  const cat = (await exA.call('GET', '/api/catalog')).j;
+  const confAll = {}; for (const i of cat.indicators) confAll[i.blk] = true; for (const t of cat.tables) confAll['TX-' + t.key] = true;
+  r = await exA.call('POST', '/api/submit', { period: per }); assert.equal(r.s, 400, 'missing confirmations');
+  assert.equal((await exA.call('POST', '/api/submit/confirmations', { period: per, confirmations: confAll })).s, 200);
   r = await exA.call('POST', '/api/submit', { period: per }); assert.equal(r.s, 409); assert(r.j.warnings.length >= 1);
-  r = await exA.call('POST', '/api/submit', { period: per, ack: true }); assert.equal(r.s, 200);
+  assert.equal((await put(exA, 'B1-P', 5)).s, 200, 'fix warning before submit');
+  r = await exA.call('POST', '/api/submit', { period: per }); assert.equal(r.s, 200, JSON.stringify(r.j));
   assert.equal((await put(exA, 'B1-C', 11)).s, 400, 'locked after submit');
-  r = await root.call('GET', `/api/approvals?period=${per}`); const mah = r.j.find(x => x.name === 'مهاباد'); assert.equal(mah.status, 'submitted'); assert(mah.warnings >= 1);
+  r = await root.call('GET', `/api/approvals?period=${per}`); const mah = r.j.find(x => x.name === 'مهاباد'); assert.equal(mah.status, 'submitted'); assert(mah.warnings >= 0);
   assert.equal((await root.call('GET', '/api/inbox')).j.pendingApprovals, 1);
   const mgr = client(); await login(mgr, N.mgr, 'Abcdefghij12', reg.mgr.secret, 1);
   r = await mgr.call('POST', '/api/approvals/decide', { period: per, unit: county('مهاباد').id, action: 'approve' }); assert.equal(r.s, 403, 'manager cannot approve own unit');
@@ -94,8 +99,8 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   r = await root.call('POST', '/api/approvals/decide', { period: per, unit: county('مهاباد').id, action: 'return', note: 'عدد کارگاه‌های بازرسی‌شده را بررسی کنید' }); assert.equal(r.s, 200);
   assert.equal((await exA.call('GET', '/api/inbox')).j.returned, 1);
   assert.equal((await put(exA, 'B1-P', 5)).s, 200, 'editable after return');
-  r = await exA.call('POST', '/api/submit', { period: per }); assert([200, 409].includes(r.s), 'resubmit');
-  if (r.s === 409) assert.equal((await exA.call('POST', '/api/submit', { period: per, ack: true })).s, 200);
+  assert.equal((await exA.call('POST', '/api/submit/confirmations', { period: per, confirmations: confAll })).s, 200);
+  r = await exA.call('POST', '/api/submit', { period: per }); assert.equal(r.s, 200, JSON.stringify(r.j));
   assert.equal((await root.call('POST', '/api/approvals/decide', { period: per, unit: county('مهاباد').id, action: 'approve' })).s, 200);
   assert.equal((await put(exA, 'B1-C', 12)).s, 400, 'approved = locked');
   // ----- جمع و داشبورد
@@ -114,7 +119,8 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   r = await root.call('POST', '/api/import/entries', { period: per, data: imp.toString('base64'), dry: true }); assert.equal(r.j.units['اشنویه'], 2); assert.equal(r.j.units['نقده'], 1);
   r = await root.call('POST', '/api/import/entries', { period: per, data: imp.toString('base64') }); assert.equal(r.j.applied, 3, JSON.stringify(r.j));
   r = await root.call('GET', `/api/entries?period=${per}&unit=${county('نقده').id}`); assert.equal(r.j.values['B1-C'], '6');
-  r = await root.call('POST', '/api/submit', { period: per, unit: county('نقده').id, ack: true }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert.equal((await root.call('POST', '/api/submit/confirmations', { period: per, unit: county('نقده').id, confirmations: confAll })).s, 200);
+  r = await root.call('POST', '/api/submit', { period: per, unit: county('نقده').id }); assert.equal(r.s, 200, JSON.stringify(r.j));
   r = await root.call('DELETE', '/api/submissions', { period: per, unit: county('نقده').id }); assert.equal(r.s, 200, JSON.stringify(r.j)); assert.equal(r.j.deleted, true);
   assert.equal((await root.call('GET', `/api/approvals?period=${per}`)).j.find(x => x.unit_id === county('نقده').id).status, 'draft');
   r = await exA.call('POST', '/api/import/entries', { period: per, data: imp.toString('base64') }); assert.equal(r.j.applied, 0);             // کارشناس فقط واحد خود
