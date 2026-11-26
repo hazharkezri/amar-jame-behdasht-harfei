@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS form_off(unit_type TEXT NOT NULL, sub_key TEXT NOT NU
 CREATE TABLE IF NOT EXISTS records(id INTEGER PRIMARY KEY, table_key TEXT NOT NULL, unit_id INTEGER NOT NULL REFERENCES units(id), data TEXT NOT NULL,
   created_by INTEGER, updated_by INTEGER, created_at INTEGER, updated_at INTEGER);
 CREATE INDEX IF NOT EXISTS ix_rec ON records(table_key,unit_id);
+CREATE TABLE IF NOT EXISTS sameh_experts(id INTEGER PRIMARY KEY, source_id TEXT UNIQUE, full_name TEXT NOT NULL, nid_last4 TEXT,
+  phone TEXT, username TEXT, role TEXT NOT NULL, unit_id INTEGER NOT NULL REFERENCES units(id), source TEXT NOT NULL DEFAULT 'sameh', created_at INTEGER);
+CREATE INDEX IF NOT EXISTS ix_sameh_expert_unit ON sameh_experts(unit_id);
+CREATE TABLE IF NOT EXISTS catalog_edit(kind TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts INTEGER, user_id INTEGER, action TEXT, detail TEXT, ip TEXT, prev TEXT, hash TEXT);
 `);
 function audit(userId, action, detail, ip) {

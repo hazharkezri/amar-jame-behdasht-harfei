@@ -1,0 +1,8 @@
+node_modules/
+__pycache__/
+*.pyc
+data/app.db
+data/app.db-shm
+data/app.db-wal
+.env
+*.log

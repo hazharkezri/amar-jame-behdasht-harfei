@@ -4,7 +4,7 @@ const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'amar-')); process.
 const run = (f, ...a) => cp.execFileSync('node', ['--no-warnings', path.join(__dirname, '..', 'scripts', f), ...a], { env: process.env, encoding: 'utf8' });
 const L = require('../lib'), X = require('../xlsx');
 const mkNid = (base) => { let s = 0; for (let i = 0; i < 9; i++) s += (+base[i]) * (10 - i); const r = s % 11; return base + (r < 2 ? r : 11 - r); };
-const N = { root: '1387140175', mgr: mkNid('123456781'), exA: mkNid('223456782'), exB: mkNid('323456783'), exC: mkNid('423456784'), bad: '1234567890' };
+const N = { root: '1387140175', mgr: mkNid('123456781'), exA: mkNid('223456782'), exB: mkNid('323456783'), exC: mkNid('423456784'), exD: mkNid('523456785'), bad: '1234567890' };
 for (const k of Object.keys(N)) if (k !== 'bad') assert(L.validNid(N[k]), k);
 assert(!L.validNid(N.bad));
 const out = run('create-root.js', N.root, 'مسئول ستاد', 'root@umsu.ac.ir');
@@ -27,7 +27,13 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   r = await root.call('POST', '/api/periods', { label: 'x' }, true); assert.equal(r.s, 403, 'csrf');
   assert.equal((await root.call('POST', '/api/periods', { label: 'شش‌ماهه اول ۱۴۰۵' })).s, 200);
   const units = (await root.call('GET', '/api/units')).j; assert.equal(units.length, 20);
-  const county = (n) => units.find(u => u.name === n);
+  const county = (n) => units.find(u => u.name === n), university = units.find(u => u.parent_id === null);
+  // ----- واحدها: افزودن، تغییر نام، حذف
+  r = await root.call('POST', '/api/units', { parent_id: university.id, name: 'واحد آزمون CRUD' }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  const tmpUnit = r.j.id;
+  assert.equal((await root.call('POST', `/api/units/${tmpUnit}/rename`, { name: 'واحد آزمون ویرایش' })).s, 200);
+  assert((await root.call('GET', '/api/units')).j.some(u => u.name === 'واحد آزمون ویرایش'));
+  assert.equal((await root.call('DELETE', `/api/units/${tmpUnit}`)).s, 200);
   // ----- بارگذاری گروهی کدملی
   const csv = [`کد ملی,نام,واحد,نقش`, `${N.mgr},مسئول مهاباد,مهاباد,مسئول`, `${N.exA},کارشناس مهاباد,مهاباد,کارشناس`, `${N.exB},کارشناس اشنویه,شهرستان اشنویه,کارشناس`, `${N.bad},بد,ارومیه,کارشناس`, `${N.exC},ناشناس,قم,کارشناس`].join('\n');
   r = await root.call('POST', '/api/allow/bulk', { csv, dry: true }); assert.equal(r.s, 200); assert.equal(r.j.valid, 3); assert.equal(r.j.errors.length, 2);
@@ -35,6 +41,10 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   const xl = X.build([{ name: 'فهرست مجاز', rows: [['کد ملی', 'نام', 'واحد', 'نقش'], [N.exC, 'کارشناس ارومیه', 'ارومیه', 'کارشناس']] }]);
   r = await root.call('POST', '/api/allow/bulk', { data: xl.toString('base64') }); assert.equal(r.j.added, 1, JSON.stringify(r.j));
   assert.equal((await root.call('GET', '/api/allow/template.xlsx')).s, 200);
+  const allowRows = (await root.call('GET', '/api/allow')).j, alTarget = allowRows.find(a => a.note === 'کارشناس ارومیه');
+  assert(alTarget, 'allow row for edit');
+  r = await root.call('PUT', `/api/allow/${alTarget.id}`, { unit_id: alTarget.unit_id, role: 'expert_ohs', note: 'کارشناس ارومیه — ویرایش' }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert.equal((await root.call('GET', '/api/allow')).j.find(a => a.id === alTarget.id).note, 'کارشناس ارومیه — ویرایش');
   // ----- ثبت‌نام
   const reg = {};
   for (const [k, nm, em] of [['mgr', 'مسئول مهاباد', 'm@umsu.ac.ir'], ['exA', 'کارشناس مهاباد', 'a@umsu.ac.ir'], ['exB', 'کارشناس اشنویه', 'b@umsu.ac.ir'], ['exC', 'کارشناس ارومیه', 'c@umsu.ac.ir']]) {
@@ -51,6 +61,13 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   assert.equal((await root.call('GET', '/api/inbox')).j.pendingUsers, 4);
   const users = (await root.call('GET', '/api/users')).j;
   for (const u of users.filter(u => u.status === 'pending')) assert.equal((await root.call('POST', `/api/users/${u.id}/status`, { status: 'active' })).s, 200);
+  // ----- کاربران: افزودن، ویرایش، حذف
+  r = await root.call('POST', '/api/users', { nid: N.exD, full_name: 'کاربر تست', email: 'd@umsu.ac.ir', phone: '09120000009', unit_id: county('مهاباد').id, role: 'expert_ohs', password: 'Abcdefghij12', status: 'pending' });
+  assert.equal(r.s, 200, JSON.stringify(r.j)); const newUid = r.j.id; assert(r.j.totp_secret);
+  r = await root.call('PUT', `/api/users/${newUid}`, { full_name: 'کاربر تست ویرایش', unit_id: county('مهاباد').id, role: 'expert_ohs', status: 'suspended' }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert((await root.call('GET', '/api/users')).j.some(u => u.id === newUid && u.full_name === 'کاربر تست ویرایش'));
+  assert.equal((await root.call('DELETE', `/api/users/${newUid}`)).s, 200);
+  assert(!(await root.call('GET', '/api/users')).j.some(u => u.id === newUid));
   // ----- ورود آمار
   const exA = client(); await login(exA, N.exA, 'Abcdefghij12', reg.exA.secret, 1);
   const per = (await exA.call('GET', '/api/periods')).j[0].id;
@@ -61,6 +78,8 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   r = await exA.call('GET', `/api/history?period=${per}&ind=B1-D`); assert(r.j.length >= 1);
   assert.equal((await put(exA, 'B1-P', 99)).s, 200);                               // بازرسی‌شده (O..T) > شناسایی‌شده → هشدار
   r = await exA.call('POST', '/api/entries/batch', { items: [{ period: per, ind: 'B1-Q', value: 3 }, { period: per, ind: 'ZZ', value: 1 }] }); assert.equal(r.j.results[0], null); assert(r.j.results[1]);
+  r = await exA.call('DELETE', '/api/entries', { period: per, ind: 'B1-Q', unit: county('مهاباد').id }); assert.equal(r.s, 200, JSON.stringify(r.j)); assert.equal(r.j.deleted, true);
+  assert.equal((await exA.call('GET', `/api/entries?period=${per}&unit=${county('مهاباد').id}`)).j.values['B1-Q'], undefined);
   assert.equal((await exA.call('GET', `/api/entries?period=${per}&unit=${county('اشنویه').id}`)).s, 403);
   assert.equal((await exA.call('GET', '/api/users')).s, 403); assert.equal((await exA.call('GET', `/api/approvals?period=${per}`)).s, 403); assert.equal((await exA.call('GET', `/api/dashboard?period=${per}`)).s, 403);
   // ----- ارسال و تأیید
@@ -95,12 +114,27 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   r = await root.call('POST', '/api/import/entries', { period: per, data: imp.toString('base64'), dry: true }); assert.equal(r.j.units['اشنویه'], 2); assert.equal(r.j.units['نقده'], 1);
   r = await root.call('POST', '/api/import/entries', { period: per, data: imp.toString('base64') }); assert.equal(r.j.applied, 3, JSON.stringify(r.j));
   r = await root.call('GET', `/api/entries?period=${per}&unit=${county('نقده').id}`); assert.equal(r.j.values['B1-C'], '6');
+  r = await root.call('POST', '/api/submit', { period: per, unit: county('نقده').id, ack: true }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  r = await root.call('DELETE', '/api/submissions', { period: per, unit: county('نقده').id }); assert.equal(r.s, 200, JSON.stringify(r.j)); assert.equal(r.j.deleted, true);
+  assert.equal((await root.call('GET', `/api/approvals?period=${per}`)).j.find(x => x.unit_id === county('نقده').id).status, 'draft');
   r = await exA.call('POST', '/api/import/entries', { period: per, data: imp.toString('base64') }); assert.equal(r.j.applied, 0);             // کارشناس فقط واحد خود
   // ----- پروفایل فرم
   const sub = (await root.call('GET', '/api/catalog')).j.layout.find(x => x.t === 'sub' && x.blk === 'B5');
   assert.equal((await root.call('POST', '/api/profile', { unit_type: 'county', hide: [sub.key] })).s, 200);
   assert((await exA.call('GET', '/api/profile')).j.hidden.includes(sub.key));
   assert.equal((await exA.call('POST', '/api/profile', { unit_type: 'county', show: [sub.key] })).s, 403);
+  // ----- کارشناسان رسمی سامح (نمای جداگانه در کاربران و دسترسی)
+  const testDb = require('../db').db;
+  testDb.prepare('INSERT INTO sameh_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+    .run('test-1', 'کارشناس تست سامح', '1234', '09120000000', 'test', 'expert_ohs', county('مهاباد').id, 'sameh', Date.now());
+  r = await root.call('GET', '/api/sameh-experts?q=' + encodeURIComponent('کارشناس تست'));
+  assert.equal(r.s, 200); assert.equal(r.j.length, 1); assert.equal(r.j[0].full_name, 'کارشناس تست سامح');
+  assert.equal((await exA.call('GET', '/api/sameh-experts')).s, 403);
+  const sx = { full_name: 'کارشناس تست جدید', nid_last4: '5678', phone: '09120000008', username: 'new', role: 'expert_ohs', unit_id: county('مهاباد').id, source_id: 'test-crud-1' };
+  r = await root.call('POST', '/api/sameh-experts', sx); assert.equal(r.s, 200, JSON.stringify(r.j)); const sxid = r.j.id;
+  r = await root.call('PUT', `/api/sameh-experts/${sxid}`, { ...sx, full_name: 'کارشناس تست ویرایش' }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert((await root.call('GET', '/api/sameh-experts?q=' + encodeURIComponent('ویرایش'))).j.some(x => x.id === sxid));
+  assert.equal((await root.call('DELETE', `/api/sameh-experts/${sxid}`)).s, 200);
   // ----- جدول‌های فایل ۲
   const tb = (await root.call('GET', '/api/catalog')).j.tables, acc = tb.find(t => t.key === 'accident');
   const sexCol = acc.cols.find(c => c.label === 'جنس'), ageCol = acc.cols.find(c => c.label === 'سن');
@@ -121,6 +155,23 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
     r = await root.call('GET', '/api/records?table=exams'); console.log('exam records', r.j.total); assert(r.j.total > 100);
     r = await root.call('POST', '/api/import/file2', { data: b64 }); r = await root.call('GET', '/api/records?table=exams'); console.log('exam records after re-import (no duplicates)', r.j.total);
   }
+  // ----- کاتالوگ: شاخص، چیدمان، قاعده، ویرایش و بازنشانی
+  assert.equal((await root.call('GET', '/api/catalog/manage')).s, 200);
+  assert.equal((await exA.call('GET', '/api/catalog/manage')).s, 403);
+  const pctRow = (await root.call('GET', '/api/catalog/manage')).j.report.find(x => x.code === 'PCT-B');
+  assert(pctRow && pctRow.formula && !pctRow.formula.includes('SUM(SUM'), 'formula round-trip: ' + JSON.stringify(pctRow));
+  r = await root.call('PUT', '/api/catalog/report/PCT-B', { item: { ...pctRow } }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert(!(await root.call('GET', '/api/catalog/manage')).j.report.find(x => x.code === 'PCT-B').formula.includes('SUM(SUM'));
+  r = await root.call('POST', '/api/catalog/indicators', { item: { id: 'TEST-1', title: 'شاخص تست', kind: 'num', blk: 'TEST' } }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  r = await root.call('POST', '/api/catalog/layout', { item: { t: 'ind', id: 'TEST-1' } }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  r = await root.call('POST', '/api/catalog/rules', { item: { a: 'TEST-1', b: ['B1-A'] } }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  r = await root.call('PUT', '/api/catalog/indicators/TEST-1', { item: { title: 'شاخص تست ویرایش', kind: 'num', blk: 'TEST' } }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert.equal((await root.call('GET', '/api/catalog/manage')).j.indicators.find(x => x.id === 'TEST-1').title, 'شاخص تست ویرایش');
+  assert.equal((await root.call('DELETE', '/api/catalog/rules/0')).s, 200);
+  assert.equal((await root.call('DELETE', '/api/catalog/indicators/TEST-1')).s, 200);
+  assert(!(await root.call('GET', '/api/catalog/manage')).j.layout.some(x => x.id === 'TEST-1'));
+  assert.equal((await root.call('POST', '/api/catalog/reset')).s, 200);
+  assert(!(await root.call('GET', '/api/catalog/manage')).j.indicators.some(x => x.id === 'TEST-1'));
   // ----- امنیت
   for (let i = 0; i < 6; i++) await client().call('POST', '/api/login', { nid: N.exB, password: 'bad-password-123', code: '000000' }, true);
   r = await root.call('GET', '/api/audit'); assert.equal(r.j.verify.ok, true);

@@ -45,6 +45,7 @@ const qKey = () => 'amar.q.' + (S.me ? S.me.id : 0);
 const qGet = () => { try { return JSON.parse(localStorage.getItem(qKey()) || '[]'); } catch (e) { return []; } };
 const qSet = (a) => { try { localStorage.setItem(qKey(), JSON.stringify(a)); } catch (e) { } };
 function qAdd(it) { const a = qGet().filter(x => !(x.period === it.period && x.ind === it.ind)); a.push(it); qSet(a); updNet(); }
+function qRemove(period, ind, unit) { qSet(qGet().filter(x => !(x.period === period && x.ind === ind && (x.unit || S.me.unit_id) === unit))); updNet(); }
 async function qFlush() {
   const a = qGet(); if (!a.length || !S.me) return;
   const r = await api('POST', '/api/entries/batch', { items: a.slice(0, 500) });
@@ -67,6 +68,10 @@ function prepCatalog() {
     else if (it.t === 'sub') { sub = { key: it.key, title: it.title, inds: [] }; b.subs.push(sub); }
     else { if (!sub) { sub = { key: b.blk + '|', title: 'عمومی', inds: [] }; b.subs.push(sub); } sub.inds.push(it.id); SUBOF[it.id] = sub.key; }
   }
+  if (S.cat.tables && S.cat.tables.length) BLOCKS.push({
+    blk: 'TX', title: 'بخش ۸ — جداول تکمیلی (فایل ۲)', tables: true,
+    subs: S.cat.tables.map(t => ({ key: 'TX|' + t.key, title: t.title, inds: [] }))
+  });
 }
 function warnings(V) {
   const v = (id) => Number(V[id]) || 0, out = [];
@@ -253,10 +258,16 @@ async function viewEntry() {
       h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => download(`/api/export.xlsx?period=${S.per}&unit=${st.unit}`, 'آمار.xlsx') } }, 'خروجی اکسل'), locked ? null : h('button', { class: 'b sec sm', on: { click: () => importDlg(st.unit) } }, 'درون‌ریزی از اکسل'),
         locked ? null : h('button', { class: 'b', on: { click: submitDlg } }, 'ارسال برای تأیید'))));
   };
-  const drawPills = () => { clear(pills); for (const b of BLOCKS) { const p = prog(b); if (!visibleInds(b).length && b.subs.every(s => st.hidden.has(s.key))) continue; pills.append(h('button', { class: 'pill' + (b.blk === st.blk ? ' on' : ''), on: { click: () => { st.blk = b.blk; sessionStorageSet('blk', b.blk); drawPills(); drawBody(); } } }, b.title.replace(/^بخش\s*\S+\s*—\s*/, ''), h('span', { class: 'pr' }, fa(p) + '٪ تکمیل'))); } };
+  const drawPills = () => { clear(pills); for (const b of BLOCKS) { const p = prog(b); if (!b.tables && !visibleInds(b).length && b.subs.every(s => st.hidden.has(s.key))) continue; pills.append(h('button', { class: 'pill' + (b.blk === st.blk ? ' on' : ''), on: { click: () => { st.blk = b.blk; sessionStorageSet('blk', b.blk); drawPills(); drawBody(); } } }, b.title.replace(/^بخش\s*\S+\s*—\s*/, ''), h('span', { class: 'pr' }, b.tables ? fa(S.cat.tables.length) + ' جدول' : fa(p) + '٪ تکمیل'))); } };
   const rowEls = {};
   const drawBody = () => {
     clear(body); const b = BLOCKS.find(x => x.blk === st.blk); body.append(h('h2', {}, b.title));
+    if (b.tables) {
+      body.append(h('div', { class: 'msg info' }, 'جداول تکمیلی فایل ۲، دادههای پایهای واحد هستند و برخلاف شاخصها به دورهی آماری وابسته نیستند. ویرایش و ذخیره آنها بلافاصله اعمال میشود و در گزارش حسابرسی ثبت میگردد.'));
+      const wrap = h('div'); body.append(wrap);
+      recordEditor({ t: sessionStorageGet('rectab') || S.cat.tables[0].key, unit: st.unit, q: '', off: 0, storeKey: 'rectab', title: 'جداول تکمیلی فایل ۲' }, wrap);
+      return;
+    }
     let first = true;
     for (const sub of b.subs) {
       if (st.hidden.has(sub.key)) continue;
@@ -271,16 +282,25 @@ async function viewEntry() {
   function indRow(id) {
     const I = IND[id], isNum = I.kind === 'num', v = st.V[id] ?? '';
     const inp = h('input', { value: v, inputMode: isNum ? 'decimal' : 'text', class: isNum ? '' : 'txt', disabled: locked, title: locked ? 'غیرفعال: دوره بسته است یا آمار ارسال/تأیید شده است.' : 'برای ذخیره، بیرون کلیک کنید یا Enter را بزنید', 'aria-label': I.title, enterKeyHint: 'next', autocomplete: 'off' });
-    const row = h('div', { class: 'ind', id: 'r-' + id }, h('div', { class: 't' }, I.title, h('small', {}, id)), inp, locked ? null : null, h('button', { class: 'h', title: 'تاریخچه', 'aria-label': 'تاریخچه', on: { click: () => histDlg(id) } }, '⟲'));
+    const del = locked ? null : h('button', { class: 'h', title: 'حذف مقدار', 'aria-label': 'حذف مقدار ' + I.title, on: { click: async () => {
+      if (!confirm(`مقدار «${I.title}» حذف شود؟ (در تاریخچه ثبت می‌شود)`)) return;
+      qRemove(S.per, id, st.unit); inp.value = ''; st.V[id] = ''; inp.classList.remove('sv', 'bad'); if (del) del.style.display = 'none';
+      if (!S.online) { qAdd({ period: S.per, unit: st.unit, ind: id, value: '' }); drawPills(); drawWarn(); return; }
+      const r = await api('DELETE', '/api/entries', { period: S.per, unit: st.unit, ind: id });
+      if (r.s !== 200) { toast(r.j.error || 'حذف نشد'); return; }
+      drawPills(); drawWarn();
+    } } }, '✕');
+    if (del) del.style.display = inp.value === '' ? 'none' : '';
+    const row = h('div', { class: 'ind', id: 'r-' + id }, h('div', { class: 't' }, I.title, h('small', {}, id)), inp, del, h('button', { class: 'h', title: 'تاریخچه', 'aria-label': 'تاریخچه', on: { click: () => histDlg(id) } }, '⟲'));
     rowEls[id] = row;
-    inp.addEventListener('input', () => { st.V[id] = isNum ? en(inp.value) : inp.value; inp.classList.remove('sv'); inp.classList.toggle('bad', isNum && inp.value !== '' && !/^\d{1,12}([.٫]\d{1,4})?$/.test(en(inp.value))); drawWarn(); });
+    inp.addEventListener('input', () => { st.V[id] = isNum ? en(inp.value) : inp.value; inp.classList.remove('sv'); inp.classList.toggle('bad', isNum && inp.value !== '' && !/^\d{1,12}([.٫]\d{1,4})?$/.test(en(inp.value))); if (del) del.style.display = inp.value === '' ? 'none' : ''; drawWarn(); });
     inp.addEventListener('change', async () => {
       const val = isNum ? en(inp.value).replace('٫', '.') : inp.value.trim(); if (isNum) inp.value = fa(val);
       if (inp.classList.contains('bad')) return;
       const r = await api('PUT', '/api/entries', { period: S.per, unit: st.unit, ind: id, value: val });
       if (r.offline) { qAdd({ period: S.per, unit: st.unit, ind: id, value: val }); inp.classList.add('sv'); return; }
       if (r.s !== 200) { inp.classList.add('bad'); toast(r.j.error || 'ذخیره نشد'); return; }
-      inp.classList.add('sv'); drawPills();
+      inp.classList.add('sv'); if (del) del.style.display = inp.value === '' ? 'none' : ''; drawPills();
       const sm = row.closest('details.sub'); if (sm) { const sub = BLOCKS.flatMap(x => x.subs).find(x => x.key === SUBOF[id]); if (sub) { const nums = sub.inds.filter(i => IND[i].kind === 'num'); sm.querySelector('small').textContent = `${fa(nums.filter(i => st.V[i] !== undefined && st.V[i] !== '').length)} از ${fa(nums.length)}`; } }
     });
     if (isNum) inp.value = v === '' ? '' : fa(v);
@@ -322,16 +342,20 @@ function importDlg(unitId) {
 }
 
 // ================= جدول‌ها و فهرست‌ها (فایل ۲) =================
-async function viewRecords() {
-  const st = { t: sessionStorageGet('tab') || S.cat.tables[0].key, unit: S.me.unit_id, q: '', off: 0 };
+function recordEditor(st, host) {
   const mgr = isMgrRole(S.me.role), ctl = h('div', { class: 'card' }), list = h('div', { class: 'card' });
-  $view.append(ctl, list);
+  const storeKey = st.storeKey || 'tab';
+  clear(host); host.append(ctl, list);
   const T = () => S.cat.tables.find(x => x.key === st.t);
   const draw = () => {
     clear(ctl);
-    const ts = h('select', { on: { change: () => { st.t = ts.value; st.off = 0; sessionStorageSet('tab', st.t); draw(); load(); } } }, S.cat.tables.map(t => h('option', { value: t.key, selected: t.key === st.t }, t.title)));
-    const q = h('input', { placeholder: 'جست‌وجو در ردیف‌ها…', value: st.q, on: { change: () => { st.q = q.value; st.off = 0; load(); } } });
-    ctl.append(h('h1', {}, 'جدول‌ها و فهرست‌ها'), h('div', { class: 'grid2' }, field('جدول', ts), mgr ? field('واحد (شامل زیرمجموعه)', unitSel(st.unit, (v) => { st.unit = v; st.off = 0; load(); })) : null, field('جست‌وجو', q)),
+    const quick = h('div', { class: 'pills' }, S.cat.tables.map(t => h('button', {
+      class: 'pill' + (t.key === st.t ? ' on' : ''), title: t.title,
+      on: { click: () => { st.t = t.key; st.off = 0; sessionStorageSet(storeKey, st.t); draw(); load(); } }
+    }, t.title)));
+    const q = h('input', { placeholder: 'جست وجو در ردیفها…', value: st.q, on: { change: () => { st.q = q.value; st.off = 0; load(); } } });
+    ctl.append(h('h1', {}, st.title || 'جدولها و فهرستها'), quick,
+      h('div', { class: 'grid2' }, mgr ? field('واحد (شامل زیرمجموعه)', unitSel(st.unit, (v) => { st.unit = v; st.off = 0; load(); })) : field('واحد', h('div', {}, (S.units.find(u => u.id === st.unit) || {}).name || '—')), field('جستجو', q)),
       h('div', { class: 'row' }, h('button', { class: 'b', on: { click: () => recDlg(null) } }, '＋ ردیف جدید'), h('button', { class: 'b sec', on: { click: () => download(`/api/records.xlsx?table=${st.t}&unit=${st.unit}`, 'جدول.xlsx') } }, 'خروجی اکسل')));
   };
   async function load() {
@@ -368,6 +392,10 @@ async function viewRecords() {
     const m = modal(t.title + (rec ? ' — ویرایش' : ' — ردیف جدید'), h('div', {}, unitPick ? field('واحد', unitPick) : null, form), true);
   }
   draw(); load();
+}
+async function viewRecords() {
+  const box = h('div'); $view.append(box);
+  recordEditor({ t: sessionStorageGet('tab') || S.cat.tables[0].key, unit: S.me.unit_id, q: '', off: 0, storeKey: 'tab' }, box);
 }
 
 // ================= داشبورد =================
@@ -433,7 +461,7 @@ async function viewAppr() {
   box.append(h('div', { class: 'row sp' }, h('h1', {}, 'تأیید ارسال‌ها'), periodSel(() => renderShell())), h('div', {}, r.j.length ? null : h('p', { class: 'mut' }, 'واحدی برای تأیید در محدوده‌ی شما نیست.')),
     h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['واحد', 'وضعیت', 'خانه‌های پرشده', 'هشدار', 'زمان ارسال', ''].map(x => h('th', {}, x))),
       r.j.map(x => h('tr', {}, h('td', { class: 'l' }, x.name), h('td', {}, h('span', { class: 'st ' + x.status }, ST[x.status].split('—')[0])), h('td', {}, fa(x.filled)), h('td', {}, x.warnings ? fa(x.warnings) : '—'), h('td', {}, when(x.submitted_at)),
-        h('td', {}, h('div', { class: 'row' }, x.filled ? h('button', { class: 'b sm sec', on: { click: () => viewUnit(x) } }, 'مشاهده') : null, x.status === 'submitted' && per.status === 'open' ? h('button', { class: 'b sm', on: { click: () => decide(x, 'approve') } }, 'تأیید') : null, ['submitted', 'approved'].includes(x.status) && per.status === 'open' ? h('button', { class: 'b sm red', on: { click: () => decide(x, 'return') } }, 'برگشت') : null)))))));
+        h('td', {}, h('div', { class: 'row' }, x.filled ? h('button', { class: 'b sm sec', on: { click: () => viewUnit(x) } }, 'مشاهده') : null, x.status === 'submitted' && per.status === 'open' ? h('button', { class: 'b sm', on: { click: () => decide(x, 'approve') } }, 'تأیید') : null, ['submitted', 'approved'].includes(x.status) && per.status === 'open' ? h('button', { class: 'b sm red', on: { click: () => decide(x, 'return') } }, 'برگشت') : null, x.status !== 'draft' && per.status === 'open' ? h('button', { class: 'b sm red', title: 'حذف وضعیت ارسال و بازگشت به پیشنویس', on: { click: async () => { if (!confirm(`ارسال واحد «${x.name}» حذف شود و دوباره پیشنویس گردد؟`)) return; const r2 = await api('DELETE', '/api/submissions', { period: S.per, unit: x.unit_id }); if (r2.s === 200) renderShell(); else toast(r2.j.error); } } }, 'حذف ارسال') : null)))))));
   async function decide(x, act) {
     if (act === 'approve') { if (x.warnings && !confirm(`${x.name} دارای ${fa(x.warnings)} هشدار منطقی است. با این حال تأیید شود؟`)) return; const r2 = await api('POST', '/api/approvals/decide', { period: S.per, unit: x.unit_id, action: 'approve' }); if (r2.s === 200) renderShell(); else toast(r2.j.error); return; }
     const note = h('textarea', { rows: 3, placeholder: 'علت برگشت (الزامی)' }), out = h('div');
@@ -451,24 +479,96 @@ async function viewAppr() {
 async function viewUsers() {
   const box = h('div'); $view.append(box);
   async function load() {
-    const [us, al] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/allow')]); clear(box);
+    const [us, al, sx] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/allow'), api('GET', '/api/sameh-experts')]); clear(box);
     if (us.s !== 200) return box.append(msg('err', us.j.error));
     const pend = us.j.filter(u => u.status === 'pending' && u.totp_ok), SF = { pending: 'در انتظار', active: 'فعال', rejected: 'ردشده', suspended: 'معلق' };
     const setSt = async (u, st) => { const r = await api('POST', `/api/users/${u.id}/status`, { status: st }); if (r.s === 200) { toast('انجام شد'); load(); renderBadges(); } else toast(r.j.error); };
     box.append(h('div', { class: 'card' }, h('h1', {}, 'درخواست‌های در انتظار تأیید شما'),
       pend.length ? h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'واحد', 'کد ملی', 'ایمیل', 'تلفن', ''].map(x => h('th', {}, x))), pend.map(u => h('tr', {}, h('td', {}, u.full_name), h('td', {}, u.unit_name), h('td', { class: 'ltr' }, u.nid), h('td', { class: 'ltr' }, u.email), h('td', { class: 'ltr' }, u.phone), h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm', on: { click: () => { if (confirm(`دسترسی ${u.full_name} (کد ملی ${u.nid}) تأیید شود؟\nبا تأیید، این فرد به آمار واحد «${u.unit_name}» دسترسی می‌یابد.`)) setSt(u, 'active'); } } }, 'تأیید'), h('button', { class: 'b sm red', on: { click: () => setSt(u, 'rejected') } }, 'رد'))))))) : h('p', { class: 'mut' }, 'درخواستی نیست. (کسانی که هنوز برنامه‌ی احراز هویت را تأیید نکرده‌اند اینجا نمی‌آیند.)')));
+    // کارشناسان رسمی سامح — جدای از حسابهای ثبتشده
+    const seQ = h('input', { placeholder: 'جستجو بر اساس نام، تلفن یا چهار رقم آخر کد ملی…', style: 'width:100%' }), seBox = h('div');
+    let seTimer = null;
+    const drawExperts = (rows) => {
+      clear(seBox);
+      if (!rows.length) return seBox.append(msg('info', 'کارشناسی با این مشخصات یافت نشد.'));
+      const allowBy4 = new Map((al.j || []).map(a => [a.nid_last4, a]));
+      seBox.append(h('p', { class: 'mut' }, `${fa(rows.length)} کارشناس از فهرست رسمی سامح (شهرستان پیرانشهر).`),
+        h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'تلفن', 'نقش', 'واحد', 'کد ملی', 'وضعیت ثبتنام', ''].map(x => h('th', {}, x))),
+          rows.map(x => {
+            const a = allowBy4.get(x.nid_last4);
+            const st = a ? (a.used ? 'ثبتنام کرده' : 'مجاز — منتظر ثبتنام') : 'فقط در فهرست نمایشی';
+            return h('tr', {}, h('td', { class: 'l' }, x.full_name), h('td', { class: 'ltr' }, x.phone || '—'),
+              h('td', {}, (S.cat.roleFa || {})[x.role] || x.role), h('td', {}, (S.units.find(u => u.id === x.unit_id) || {}).name || '—'),
+              h('td', { class: 'ltr' }, '••••••' + x.nid_last4), h('td', {}, st),
+              h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm sec', on: { click: () => expertDlg(x) } }, 'ویرایش'), h('button', { class: 'b sm red', on: { click: async () => { if (!confirm('این کارشناس از فهرست سامح حذف شود؟')) return; const r = await api('DELETE', '/api/sameh-experts/' + x.id); if (r.s === 200) load(); else toast(r.j.error); } } }, 'حذف'))));
+          }))));
+    };
+    const loadExperts = async () => {
+      const r = await api('GET', '/api/sameh-experts?q=' + encodeURIComponent(seQ.value.trim()));
+      if (r.s !== 200) return seBox.append(msg('err', r.j.error || 'خطا در خواندن فهرست سامح'));
+      drawExperts(r.j);
+    };
+    seQ.addEventListener('input', () => { clearTimeout(seTimer); seTimer = setTimeout(loadExperts, 250); });
+    box.append(h('div', { class: 'card' }, h('h1', {}, 'کارشناسان بهداشت حرفه‌ای سامح — پیرانشهر'),
+      h('p', { class: 'mut' }, 'این افراد از فهرست رسمی سامح وارد سامانه شدهاند و در «فهرست مجاز» با نقش کارشناس بهداشت حرفه‌ای قرار دارند. رمز عبوری برای آنان ذخیره نشده است؛ ورود آنها با کد ملی و تأیید پیامکی (OTP) انجام میشود و پس از تأیید OTP در شکل «درخواستهای در انتظار تأیید» ظاهر میشوند.'),
+      field('جستجو', seQ), h('div', { class: 'row' }, h('button', { class: 'b', on: { click: () => expertDlg(null) } }, '＋ افزودن کارشناس سامح')), seBox));
+    if (sx.s === 200) drawExperts(sx.j); else seBox.append(msg('err', sx.j.error || 'خطا در خواندن فهرست سامح'));
     // فهرست مجاز
     const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10 }), note = h('input', { placeholder: 'نام (اختیاری)' }), role = h('select', {}, (S.cat.roleFa?Object.entries(S.cat.roleFa):[]).map(([k,v])=>h('option',{value:k},v))), uSel = unitSel(S.me.unit_id, () => { }), out = h('div');
     box.append(h('div', { class: 'card' }, h('h1', {}, 'فهرست مجاز (دعوت)'), h('p', { class: 'mut' }, 'ثبت‌نام فقط برای کد ملی‌هایی ممکن است که شما اینجا ثبت کنید. پس از ثبت‌نامِ فرد، باید همین‌جا دسترسی‌اش را تأیید کنید.'),
       h('form', { on: { submit: async (e) => { e.preventDefault(); clear(out); const r = await api('POST', '/api/allow', { nid: en(nid.value), unit_id: +uSel.value, role: role.value, note: note.value }); if (r.s === 200) { toast('افزوده شد'); load(); } else out.append(msg('err', r.j.error)); } } },
         h('div', { class: 'grid2' }, field('کد ملی', nid), field('نام', note), field('واحد', uSel), field('نقش', role)), out, h('div', { class: 'row' }, h('button', { class: 'b' }, 'افزودن'), h('button', { type: 'button', class: 'b sec', on: { click: bulkDlg } }, 'بارگذاری گروهی (اکسل / متن)'), h('button', { type: 'button', class: 'b sec', on: { click: () => download('/api/allow/template.xlsx', 'قالب.xlsx') } }, 'دانلود قالب اکسل'))),
-      h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['کد ملی', 'نام', 'واحد', 'نقش', 'وضعیت', ''].map(x => h('th', {}, x))), (al.j || []).map(a => h('tr', {}, h('td', { class: 'ltr' }, '••••••' + a.nid_last4), h('td', {}, a.note), h('td', {}, (S.units.find(u => u.id === a.unit_id) || {}).name), h('td', {}, (S.cat.roleFa || {})[a.role] || a.role), h('td', {}, a.used ? 'ثبت‌نام کرده' : 'منتظر ثبت‌نام'), h('td', {}, a.used ? null : h('button', { class: 'b sm red', on: { click: async () => { if (confirm('حذف شود؟')) { await api('DELETE', '/api/allow/' + a.id); load(); } } } }, 'حذف'))))))));
-    box.append(h('div', { class: 'card' }, h('h1', {}, 'همه‌ی کاربران'), h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'واحد', 'نقش', 'کد ملی', 'وضعیت', 'آخرین ورود', ''].map(x => h('th', {}, x))),
+      h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['کد ملی', 'نام', 'واحد', 'نقش', 'وضعیت', ''].map(x => h('th', {}, x))), (al.j || []).map(a => h('tr', {}, h('td', { class: 'ltr' }, '••••••' + a.nid_last4), h('td', {}, a.note), h('td', {}, (S.units.find(u => u.id === a.unit_id) || {}).name), h('td', {}, (S.cat.roleFa || {})[a.role] || a.role), h('td', {}, a.used ? 'ثبت‌نام کرده' : 'منتظر ثبت‌نام'), h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm sec', on: { click: () => allowDlg(a) } }, 'ویرایش'), a.used ? null : h('button', { class: 'b sm red', on: { click: async () => { if (confirm('حذف شود؟')) { const r = await api('DELETE', '/api/allow/' + a.id); if (r.s === 200) load(); else toast(r.j.error); } } } }, 'حذف')))))))));
+    box.append(h('div', { class: 'card' }, h('div', { class: 'row sp' }, h('h1', {}, 'همه‌ی کاربران'), h('button', { class: 'b', on: { click: () => userDlg(null) } }, '＋ کاربر جدید')), h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'واحد', 'نقش', 'کد ملی', 'وضعیت', 'آخرین ورود', ''].map(x => h('th', {}, x))),
       us.j.map(u => h('tr', {}, h('td', {}, u.full_name), h('td', {}, u.unit_name), h('td', {}, (S.cat.roleFa || {})[u.role] || u.role), h('td', { class: 'ltr' }, '••••••' + u.nid_last4), h('td', {}, SF[u.status] || u.status), h('td', {}, when(u.last_login)),
         h('td', {}, h('div', { class: 'row' }, u.status === 'active' ? h('button', { class: 'b sm red', on: { click: () => { if (confirm('دسترسی معلق شود؟')) setSt(u, 'suspended'); } } }, 'تعلیق') : null, ['suspended', 'rejected'].includes(u.status) && u.totp_ok ? h('button', { class: 'b sm', on: { click: () => setSt(u, 'active') } }, 'فعال‌سازی') : null,
-          h('button', { class: 'b sm sec', on: { click: async () => { if (!confirm('حساب پاک و کد ملی دوباره برای ثبت‌نام آزاد می‌شود (مثلاً برای گم‌شدن گوشی). ادامه؟')) return; const r = await api('POST', `/api/users/${u.id}/reset`, {}); if (r.s === 200) load(); else toast(r.j.error); } } }, 'بازنشانی')))))))));
+          h('button', { class: 'b sm sec', on: { click: () => userDlg(u) } }, 'ویرایش'), h('button', { class: 'b sm sec', on: { click: async () => { if (!confirm('حساب پاک و کد ملی دوباره برای ثبت‌نام آزاد می‌شود (مثلاً برای گم‌شدن گوشی). ادامه؟')) return; const r = await api('POST', `/api/users/${u.id}/reset`, {}); if (r.s === 200) load(); else toast(r.j.error); } } }, 'بازنشانی'), h('button', { class: 'b sm red', on: { click: async () => { if (!confirm(`حساب «${u.full_name}» کاملاً حذف شود؟ کد ملی دوباره قابل دعوت میشود.`)) return; const r = await api('DELETE', `/api/users/${u.id}`); if (r.s === 200) load(); else toast(r.j.error); } } }, 'حذف')))))))));
   }
   async function renderBadges() { const ib = await api('GET', '/api/inbox'); S.inbox = ib.j; }
+  const roleOpts = (cur) => h('select', {}, (S.cat.roleFa ? Object.entries(S.cat.roleFa) : []).map(([k, v]) => h('option', { value: k, selected: k === cur }, v)));
+  function allowDlg(a) {
+    const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10, disabled: !!a, value: a ? '••••••' + a.nid_last4 : '' });
+    const unit = unitSel(a ? a.unit_id : S.me.unit_id, () => { }, (u) => !(a && a.used));
+    const role = roleOpts(a ? a.role : 'expert_ohs'), note = h('input', { value: a ? a.note || '' : '' });
+    if (a && a.used) { unit.disabled = true; role.disabled = true; }
+    const out = h('div');
+    const m = modal('ویرایش دعوت' + (a ? '' : ' — جدید'), h('div', {}, a ? msg('info', 'کد ملی و نقش کاربرانی که ثبت‌نام کردهاند تغییر نمیکند.') : null,
+      h('form', { on: { submit: async (e) => { e.preventDefault(); clear(out);
+        const b = { nid: a ? undefined : en(nid.value), unit_id: +unit.value, role: role.value, note: note.value };
+        const r = await api(a ? 'PUT' : 'POST', a ? '/api/allow/' + a.id : '/api/allow', b);
+        if (r.s !== 200) return out.append(msg('err', r.j.error || 'خطا'));
+        m.remove(); toast('ذخیره شد ✓'); load();
+      } } }, h('div', { class: 'grid2' }, field('کد ملی', nid), field('نام / یادداشت', note), field('واحد', unit), field('نقش', role)), out, h('button', { class: 'b' }, 'ذخیره'))));
+  }
+  function expertDlg(x) {
+    const f = (v, max = 100) => h('input', { value: x ? (x[v] ?? '') : '', maxLength: max });
+    const name = f('full_name'), last4 = f('nid_last4', 4), phone = f('phone', 20), username = f('username', 60), src = f('source_id', 80);
+    const role = roleOpts(x ? x.role : 'expert_ohs'), unit = unitSel(x ? x.unit_id : S.me.unit_id, () => { }), out = h('div');
+    const m = modal('کارشناس سامح' + (x ? ' — ویرایش' : ' — جدید'), h('div', {},
+      h('form', { on: { submit: async (e) => { e.preventDefault(); clear(out);
+        const b = { full_name: name.value, nid_last4: en(last4.value), phone: en(phone.value), username: username.value, source_id: src.value || undefined, role: role.value, unit_id: +unit.value };
+        const r = await api(x ? 'PUT' : 'POST', x ? '/api/sameh-experts/' + x.id : '/api/sameh-experts', b);
+        if (r.s !== 200) return out.append(msg('err', r.j.error || 'خطا'));
+        m.remove(); toast('ذخیره شد ✓'); load();
+      } } }, h('div', { class: 'grid2' }, field('نام و نام خانوادگی', name), field('چهار رقم آخر کد ملی', last4), field('تلفن', phone), field('نام کاربری سامح', username), field('شناسه منبع (اختیاری)', src), field('واحد', unit), field('نقش', role)), out, h('button', { class: 'b' }, 'ذخیره'))), true);
+  }
+  function userDlg(u) {
+    const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10, disabled: !!u, value: u ? '••••••' + u.nid_last4 : '' });
+    const name = h('input', { value: u ? u.full_name : '' }), mail = h('input', { class: 'ltr', type: 'email', value: u ? u.email || '' : '' }), tel = h('input', { class: 'ltr', value: u ? u.phone || '' : '' });
+    const unit = unitSel(u ? u.unit_id : S.me.unit_id, () => { }), role = roleOpts(u ? u.role : 'expert_ohs');
+    const status = h('select', {}, [['pending', 'در انتظار تأیید'], ['active', 'فعال'], ['rejected', 'ردشده'], ['suspended', 'معلق']].map(([k, v]) => h('option', { value: k, selected: k === (u ? u.status : 'pending') }, v)));
+    const pw = h('input', { type: 'password', class: 'ltr', autocomplete: 'new-password', placeholder: u ? 'برای تغییر رمز، پر کنید' : 'حداقل ۱۲ کاراکتر، حرف و عدد' });
+    const reset = u ? h('input', { type: 'checkbox' }) : null, out = h('div');
+    const m = modal('کاربر' + (u ? ' — ویرایش' : ' — جدید'), h('div', {},
+      h('form', { on: { submit: async (e) => { e.preventDefault(); clear(out);
+        const b = u ? { full_name: name.value, email: mail.value, phone: en(tel.value), unit_id: +unit.value, role: role.value, status: status.value, password: pw.value || undefined, reset_totp: reset.checked } : { nid: en(nid.value), full_name: name.value, email: mail.value, phone: en(tel.value), unit_id: +unit.value, role: role.value, status: status.value, password: pw.value };
+        const r = await api(u ? 'PUT' : 'POST', u ? '/api/users/' + u.id : '/api/users', b);
+        if (r.s !== 200) return out.append(msg('err', r.j.error || 'خطا'));
+        m.remove();
+        if (r.j.totp_secret) modal('کلید احراز هویت — نمایش یکبار', h('div', {}, msg('warn', 'این کلید را فقط همین بار میبینید؛ آن را به کاربر بدهید تا در برنامه احراز هویت وارد کند.'), h('div', { class: 'secret' }, r.j.totp_secret), h('p', {}, h('a', { href: r.j.otpauth }, 'لینک otpauth'))), true);
+        toast('ذخیره شد ✓'); load(); renderBadges();
+      } } }, h('div', { class: 'grid2' }, field('کد ملی', nid), field('نام و نام خانوادگی', name), field('ایمیل سازمانی', mail), field('تلفن', tel), field('واحد', unit), field('نقش', role), field('وضعیت', status), field('رمز عبور', pw), reset ? h('label', { class: 'chk' }, reset, 'ساخت کلید احراز هویت تازه') : null), out, h('button', { class: 'b' }, 'ذخیره'))), true);
+  }
   function bulkDlg() {
     const f = h('input', { type: 'file', accept: '.xlsx' }), ta = h('textarea', { rows: 6, class: 'ltr', placeholder: 'هر خط: کدملی، نام، واحد، نقش\n0012345678, علی احمدی, مهاباد, کارشناس' }), out = h('div'), go = h('button', { class: 'b', disabled: true }, 'ثبت نهایی'); let payload = null;
     const preview = async () => { clear(out); go.disabled = true; payload = f.files[0] ? { data: await b64(f.files[0]) } : { csv: ta.value }; if (!f.files[0] && !ta.value.trim()) return;
@@ -536,11 +636,79 @@ async function viewAnalytics() {
   }
   load();
 }
+// ================= مدیریت کاتالوگ (شاخصها، فرمولها، جدولها، قواعد) =================
+function catalogManager(host, ct) {
+  const kinds = [['indicators', 'شاخصها'], ['layout', 'چیدمان فرم'], ['report', 'گزارشها و فرمولها'], ['tables', 'جدولها و فهرستها'], ['rules', 'قواعد هشدار']];
+  const st = { k: 'indicators', q: '', off: 0 }, ctl = h('div', { class: 'card' }), list = h('div', { class: 'card' });
+  clear(host); host.append(ctl, list);
+  const arr = () => ct[st.k] || [];
+  const keyOf = (x, i) => st.k === 'layout' || st.k === 'rules' ? i : st.k === 'indicators' ? x.id : st.k === 'report' ? x.code : x.key;
+  const titleOf = (x, i) => st.k === 'indicators' ? `${x.id} — ${x.title}` : st.k === 'layout' ? `${i + 1}. ${x.t === 'sec' ? 'بخش' : x.t === 'sub' ? 'زیربخش' : 'شاخص'} ${x.title || x.key || x.id || ''}` : st.k === 'report' ? `${x.code} — ${x.title}` : st.k === 'tables' ? `${x.key} — ${x.title}` : `${x.a} ← ${(x.b || []).join(' + ')}`;
+  const descOf = (x) => st.k === 'indicators' ? `${x.kind === 'num' ? 'عددی' : 'متنی'} — بخش ${x.blk || '—'}` : st.k === 'layout' ? (x.blk || x.key || x.id || '') : st.k === 'report' ? (x.formula || '').slice(0, 120) : st.k === 'tables' ? `${(x.cols || []).length} ستون — ${x.sheet || 'بدون شیت'}` : 'هشدار اگر مقدار سمت چپ از جمع سمت راست بیشتر شود';
+  async function reload() { const r = await api('GET', '/api/catalog/manage'); if (r.s === 200) { Object.assign(ct, r.j); draw(); } else toast(r.j.error || 'خطا'); }
+  function draw() {
+    clear(ctl);
+    ctl.append(h('h1', {}, 'کاتالوگ و فرمولها'), h('p', { class: 'mut' }, ' اینجا تعریف شاخصها، چیدمان فرم، فرمولهای محاسباتی، جدولهای فایل ۲ و قواعد هشدار قابل ویرایش است. نوشتن «بازنشانی» همه را به حالت رسمی سامح برمیگرداند.'),
+      h('div', { class: 'pills' }, kinds.map(([k, t]) => h('button', { class: 'pill' + (k === st.k ? ' on' : ''), on: { click: () => { st.k = k; st.off = 0; st.q = ''; draw(); } } }, `${t} (${fa((ct[k] || []).length)})`))));
+    const q = h('input', { placeholder: 'جستوجو…', value: st.q, on: { change: () => { st.q = q.value; st.off = 0; draw(); } } });
+    ctl.append(h('div', { class: 'row' }, h('div', { class: 'grow' }, q), h('button', { class: 'b', on: { click: () => dlg(null) } }, '＋ ردیف جدید'),
+      h('button', { class: 'b red sm', on: { click: async () => { if (!confirm('همه‌ی تغییرات کاتالوگ حذف و به حالت اولیه سامح برگردد؟')) return; const r = await api('POST', '/api/catalog/reset', {}); if (r.s === 200) { toast('بازنشانی شد'); reload(); } else toast(r.j.error); } } }, 'بازنشانی کاتالوگ')));
+    const all = arr(), qq = st.q.trim(), filtered = qq ? all.filter(x => titleOf(x, all.indexOf(x)).includes(qq) || JSON.stringify(x).includes(qq)) : all;
+    const page = filtered.slice(st.off, st.off + 100);
+    clear(list);
+    list.append(h('div', { class: 'mut' }, `${fa(filtered.length)} ردیف`), h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, h('th', {}, 'مورد'), h('th', {}, 'توضیح'), h('th', {}, '')),
+      page.map(x => {
+        const i = all.indexOf(x), key = keyOf(x, i);
+        return h('tr', {}, h('td', { class: 'l' }, titleOf(x, i)), h('td', { class: 'l mut' }, descOf(x)), h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm sec', on: { click: () => dlg(x, key) } }, 'ویرایش'), h('button', { class: 'b sm red', on: { click: async () => { if (!confirm('این ردیف حذف شود؟')) return; const r = await api('DELETE', `/api/catalog/${st.k}/${encodeURIComponent(key)}`, {}); if (r.s === 200) { toast('حذف شد'); reload(); } else toast(r.j.error); } } }, 'حذف'))));
+      }))), h('div', { class: 'row' }, st.off > 0 ? h('button', { class: 'b sec sm', on: { click: () => { st.off = Math.max(0, st.off - 100); draw(); } } }, 'قبلی') : null, st.off + 100 < filtered.length ? h('button', { class: 'b sec sm', on: { click: () => { st.off += 100; draw(); } } }, 'بعدی') : null));
+  }
+  function dlg(item, key) {
+    const inp = (v, extra = {}) => h('input', { value: item ? (v(item) ?? '') : '', ...extra }), f = {};
+    const mk = (label, node) => { f[label] = node; return field(label, node); };
+    const grid = h('div', { class: 'grid2' }), out = h('div');
+    if (st.k === 'indicators') {
+      grid.append(mk('کد', inp(x => x.id, { disabled: !!item, class: 'ltr' })), mk('عنوان', inp(x => x.title)),
+        mk('نوع', h('select', {}, h('option', { value: 'num', selected: !item || item.kind === 'num' }, 'عددی'), h('option', { value: 'text', selected: item && item.kind === 'text' }, 'متنی'))),
+        mk('بخش', inp(x => x.blk, { class: 'ltr' })), mk('منبع اکسل', inp(x => x.src, { class: 'ltr' })));
+    } else if (st.k === 'layout') {
+      grid.append(mk('نوع', h('select', {}, [['sec', 'بخش'], ['sub', 'زیربخش'], ['ind', 'شاخص']].map(([v, t]) => h('option', { value: v, selected: item && item.t === v }, t)))),
+        mk('عنوان', inp(x => x.title)), mk('کد بخش', inp(x => x.blk, { class: 'ltr' })), mk('کلید زیربخش', inp(x => x.key)), mk('کد شاخص', inp(x => x.id, { class: 'ltr' })));
+    } else if (st.k === 'report') {
+      grid.append(mk('کد', inp(x => x.code, { disabled: !!item, class: 'ltr' })), mk('عنوان', inp(x => x.title)), mk('بخش', inp(x => x.section)),
+        h('label', { class: 'chk' }, f.pct = h('input', { type: 'checkbox', checked: item && item.pct }), 'درصدی'));
+      grid.append(h('div', { class: 'grow' }, field('فرمول (مثال: SUM(B1-I,B1-J)/SUM(B1-C)*100 یا R:PCT-B)', f.formula = h('textarea', { rows: 5, class: 'ltr', value: item ? item.formula || '' : '' }))));
+    } else if (st.k === 'tables') {
+      grid.append(mk('کلید', inp(x => x.key, { disabled: !!item, class: 'ltr' })), mk('عنوان', inp(x => x.title)), mk('نام شیت', inp(x => x.sheet)),
+        h('div', { class: 'grow' }, field('ستونها (JSON)', f.cols = h('textarea', { rows: 8, class: 'ltr', value: item ? JSON.stringify(item.cols, null, 2) : '[]' }))),
+        h('div', { class: 'grow' }, field('تنظیمات درونریزی (JSON)', f.import = h('textarea', { rows: 5, class: 'ltr', value: item ? JSON.stringify(item.import || {}, null, 2) : '{}' }))));
+    } else {
+      grid.append(h('div', { class: 'grow' }, field('شاخص هدف', f.a = h('select', {}, (ct.indicators || []).map(x => h('option', { value: x.id, selected: item && item.a === x.id }, `${x.id} — ${x.title}`))))),
+        h('div', { class: 'grow' }, field('جمع شاخصها (با کاما جدا کنید)', f.b = inp(x => (x.b || []).join(', '), { class: 'ltr' }))));
+    }
+    const form = h('form', {}, grid, out, h('div', { class: 'row' }, h('button', { class: 'b' }, 'ذخیره')));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault(); clear(out); let data;
+      try {
+        if (st.k === 'indicators') data = { id: f['کد'].value, title: f['عنوان'].value, kind: f['نوع'].value, blk: f['بخش'].value, src: f['منبع اکسل'].value };
+        else if (st.k === 'layout') data = { t: f['نوع'].value, title: f['عنوان'].value, blk: f['کد بخش'].value, key: f['کلید زیربخش'].value, id: f['کد شاخص'].value };
+        else if (st.k === 'report') data = { code: f['کد'].value, title: f['عنوان'].value, section: f['بخش'].value, pct: f.pct.checked, formula: f.formula.value };
+        else if (st.k === 'tables') data = { key: f['کلید'].value, title: f['عنوان'].value, sheet: f['نام شیت'].value, cols: f.cols.value, import: f.import.value };
+        else data = { a: f.a.value, b: f.b.value };
+        const r = await api(item ? 'PUT' : 'POST', item ? `/api/catalog/${st.k}/${encodeURIComponent(key)}` : `/api/catalog/${st.k}`, { item: data });
+        if (r.s !== 200) return out.append(msg('err', r.j.error || 'خطا'));
+        m.remove(); toast('ذخیره شد ✓'); reload();
+      } catch (err) { out.append(msg('err', err.message)); }
+    });
+    const m = modal('کاتالوگ — ' + (item ? 'ویرایش' : 'جدید'), h('div', {}, form), true);
+  }
+  draw();
+}
+
 // ================= مدیریت ستاد =================
 async function viewAdmin() {
   const box = h('div'); $view.append(box);
   async function load() {
-    const [pf, au] = await Promise.all([api('GET', '/api/profile/all'), api('GET', '/api/audit')]); clear(box);
+    const [pf, au, ct] = await Promise.all([api('GET', '/api/profile/all'), api('GET', '/api/audit'), api('GET', '/api/catalog/manage')]); clear(box);
     // دوره‌ها
     const lab = h('input', { placeholder: 'مثلاً: ۱۴۰۵ — سه‌ماهه‌ی دوم' });
     box.append(h('div', { class: 'card' }, h('h1', {}, 'دوره‌های آماری'), h('table', { class: 'tbl' }, S.periods.map(p => h('tr', {}, h('td', { class: 'l' }, p.label), h('td', {}, p.status === 'open' ? 'باز' : 'بسته'), h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm sec', on: { click: async () => { await api('POST', `/api/periods/${p.id}/status`, { status: p.status === 'open' ? 'closed' : 'open' }); await enter(); } } }, p.status === 'open' ? 'بستن' : 'بازکردن'), h('button', { class: 'b sm sec', on: { click: async () => { const nl = prompt('عنوان جدید:', p.label); if (!nl) return; const r = await api('PUT', `/api/periods/${p.id}`, { label: nl }); if (r.s === 200) await enter(); else toast(r.j.error); } } }, 'ویرایش'), h('button', { class: 'b sm red', on: { click: async () => { if (!confirm('این دوره و تمام داده‌های آن حذف شود؟')) return; const r = await api('DELETE', `/api/periods/${p.id}`); if (r.s === 200) await enter(); else toast(r.j.error); } } }, 'حذف')))))),
@@ -554,6 +722,9 @@ async function viewAdmin() {
       d.append(t); prof.append(d); }
     prof.append(h('button', { class: 'b', on: { click: async () => { for (const [ty] of types) { const hide = [], show = []; for (const [t2, k, on] of Object.values(chg)) if (t2 === ty) (on ? show : hide).push(k); if (hide.length || show.length) await api('POST', '/api/profile', { unit_type: ty, hide, show }); } toast('ذخیره شد'); load(); } } }, 'ذخیره‌ی پروفایل‌ها'));
     box.append(prof);
+    // کاتالوگ، فرمولها و قواعد
+    const catHost = h('div'); box.append(catHost);
+    if (ct.s === 200) catalogManager(catHost, ct.j); else catHost.append(msg('err', ct.j.error || 'خطا در خواندن کاتالوگ'));
     // واحدها
     const nm = h('input', { placeholder: 'نام واحد جدید' });
     const searchInp = h('input', { placeholder: 'جست‌وجوی واحد (دانشگاه/شهرستان/مرکز/...)...', style: 'width:100%' });
@@ -567,7 +738,8 @@ async function viewAdmin() {
     });
     box.append(h('div', { class: 'card' }, h('h1', {}, 'ساختار واحدها'), h('p', { class: 'mut' }, `${fa(S.units.length)} واحد تعریف شده است. (برای افزودن مرکز/پایگاه/خانه‌ی بهداشت، واحد والد را انتخاب کنید؛ نوع واحد به‌صورت خودکار تعیین می‌شود.)`), field('جست‌وجو', searchInp), h('div', { class: 'grid2' }, field('زیرمجموعه‌ی', par), field('نام واحد جدید', nm)),
       h('div', { class: 'row' }, h('button', { class: 'b', on: { click: async () => { const r = await api('POST', '/api/units', { parent_id: +par.value, name: nm.value }); if (r.s === 200) { const u = await api('GET', '/api/units'); S.units = u.j; load(); } else toast(r.j.error); } } }, 'افزودن واحد'),
-        h('button', { class: 'b red sm', on: { click: async () => { if (!confirm('این واحد و تمام زیرمجموعه‌های آن حذف شوند؟')) return; const r = await api('DELETE', '/api/units/' + par.value); if (r.s === 200) { const u = await api('GET', '/api/units'); S.units = u.j; load(); } else toast(r.j.error); } } }, 'حذف واحد انتخاب‌شده'))));
+        h('button', { class: 'b sec sm', on: { click: async () => { const cur = S.units.find(u => u.id === +par.value); const nn = prompt('نام جدید واحد:', cur ? cur.name : ''); if (!nn) return; const r = await api('POST', '/api/units/' + par.value + '/rename', { name: nn }); if (r.s === 200) { const u = await api('GET', '/api/units'); S.units = u.j; load(); } else toast(r.j.error); } } }, 'تغییر نام واحد'),
+        h('button', { class: 'b red sm', on: { click: async () => { if (!confirm('این واحد و تمام زیرمجموعه‌های آن حذف شوند؟ کاربران و دعوتهای زیرمجموعه به واحد بالادست منتقل میشوند.')) return; const r = await api('DELETE', '/api/units/' + par.value); if (r.s === 200) { const u = await api('GET', '/api/units'); S.units = u.j; load(); } else toast(r.j.error); } } }, 'حذف واحد انتخاب‌شده'))));
     // فایل ۲
     const f = h('input', { type: 'file', accept: '.xlsx' }), o2 = h('div'), ap = h('button', { class: 'b', disabled: true }, 'درون‌ریزی نهایی'); let data = null;
     f.addEventListener('change', async () => { clear(o2); ap.disabled = true; if (!f.files[0]) return; data = await b64(f.files[0]); const r = await api('POST', '/api/import/file2', { data, dry: true }); if (r.s !== 200) return o2.append(msg('err', r.j.error));

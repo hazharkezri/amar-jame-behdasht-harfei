@@ -3,14 +3,15 @@
 const X = require('./xlsx');
 const L = require('./lib');
 const { db, subtreeIds, inList, tx } = require('./db');
-const { TAB, normVal } = require('./report');
+const RPT = require('./report');
+const normVal = RPT.normVal;
 
 function importFile2(buf, { root, actor, dry }) {
   const sheets = X.read(buf), bySheet = new Map(sheets.map(s => [s.name, s]));
   const ids = subtreeIds(root), units = db.prepare(`SELECT id,name FROM units WHERE id IN (${inList(ids)})`).all(...ids);
   const byName = new Map(units.map(u => [L.norm(u.name), u.id]));
   const out = { tables: {}, unmatched: [], total: 0, missingSheets: [] }, batches = [];
-  for (const t of TAB.tables) {
+  for (const t of RPT.getCatalog().TAB.tables) {
     const imp = t.import, sh = bySheet.get(imp.sheet);
     if (!sh) { if (!out.missingSheets.includes(imp.sheet)) out.missingSheets.push(imp.sheet); continue; }
     const recs = []; let last = null;

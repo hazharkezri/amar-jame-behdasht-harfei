@@ -9,7 +9,9 @@ const { db, audit, tx } = require('../db');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const FACILITIES_FILE = path.join(DATA_DIR, 'sameh-units-piranshahr.json');
-const USERS_FILE = 'C:/Users/laptopMad/AppData/Local/Temp/opencode/sameh-users-piranshahr.json';
+const EXPERTS_FILE = path.join(DATA_DIR, 'sameh-experts-piranshahr.json');
+// فایل خام کاربران سامح (شامل کد ملی) فقط بهصورت موقت و اختیاری است؛ در استقرارها وجود ندارد.
+const USERS_FILE = process.env.SAMEH_USERS_FILE || 'C:/Users/laptopMad/AppData/Local/Temp/opencode/sameh-users-raw-piranshahr.json';
 const COUNTY_ID = 92;
 const ID_MAP = { '10001': 1, '1370000001': 5, '1370000836': COUNTY_ID };
 
@@ -50,9 +52,10 @@ if (!fs.existsSync(FACILITIES_FILE)) {
   console.warn(`فایل کارگاهها یافت نشد؛ وارد کردن دادههای سامح رد شد: ${FACILITIES_FILE}`);
 } else {
   const facilities = JSON.parse(fs.readFileSync(FACILITIES_FILE, 'utf8'));
+  const experts = fs.existsSync(EXPERTS_FILE) ? JSON.parse(fs.readFileSync(EXPERTS_FILE, 'utf8')) : [];
   const users = fs.existsSync(USERS_FILE) ? JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')) : [];
 
-  const result = { facilities: 0, users: 0, skippedUsers: 0 };
+  const result = { facilities: 0, experts: 0, users: 0, skippedUsers: 0, notedUsers: 0 };
 
   tx(() => {
     db.prepare("DELETE FROM records WHERE table_key='tashkilat' AND data LIKE '%\"_sameh\":1%'").run();
@@ -77,14 +80,31 @@ if (!fs.existsSync(FACILITIES_FILE)) {
       result.facilities++;
     }
 
+    // فهرست نمایشی کارشناسان (بدون کد ملی) — منبع پایدار برای نمای کاربران
+    const upsertExpert = db.prepare(`INSERT INTO sameh_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(source_id) DO UPDATE SET full_name=excluded.full_name,nid_last4=excluded.nid_last4,
+        phone=excluded.phone,username=excluded.username,role=excluded.role,unit_id=excluded.unit_id`);
+    for (const x of experts) {
+      if (!text(x.full_name) || !text(x.source_id)) continue;
+      upsertExpert.run(text(x.source_id), text(x.full_name), text(x.nid_last4), text(x.phone), text(x.username),
+        text(x.role) || 'expert_ohs', +x.unit_id || COUNTY_ID, text(x.source) || 'sameh', Date.now());
+      result.experts++;
+    }
+
     const insAllow = db.prepare(`INSERT OR IGNORE INTO allow(nid_hash,nid_enc,nid_last4,unit_id,role,note,created_by,created_at,used)
       VALUES(?,?,?,?,?,?,NULL,?,0)`);
+    const noteAllow = db.prepare('UPDATE allow SET note=? WHERE nid_hash=?');
     const hasNid = (table, hash) => !!db.prepare(`SELECT 1 FROM ${table} WHERE nid_hash=?`).get(hash);
     for (const x of users) {
       const nid = text(x.nationalId).replace(/\D/g, '');
       if (!L.validNid(nid) || hasNid('users', L.hmac(nid))) { result.skippedUsers++; continue; }
-      const changes = insAllow.run(L.hmac(nid), L.enc(nid), nid.slice(-4), COUNTY_ID, roleForUser(x), 'وارد شده از سامانه سامح', Date.now()).changes;
+      const name = `${text(x.firstName)} ${text(x.lastName)}`.trim();
+      const note = `${name || 'کارشناس سامح'} — وارد شده از سامانه سامح`.trim();
+      const hash = L.hmac(nid);
+      const changes = insAllow.run(hash, L.enc(nid), nid.slice(-4), COUNTY_ID, roleForUser(x), note, Date.now()).changes;
       result.users += changes;
+      result.notedUsers += noteAllow.run(note, hash).changes;
     }
 
     audit(null, 'sameh_data_import', { ...result, facilitiesFile: path.basename(FACILITIES_FILE) }, 'import');

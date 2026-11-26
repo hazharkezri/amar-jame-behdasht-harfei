@@ -7,7 +7,9 @@ const L = require('./lib');
 const X = require('./xlsx');
 const { db, audit, verifyAudit, subtreeIds, inList, tx } = require('./db');
 require('./bootstrap');
-const { CAT, REP, TAB, IND, RULES, checkRules, computeReport, normVal } = require('./report');
+const RPT = require('./report');
+const { checkRules, computeReport, normVal } = RPT;
+let { CAT, REP, TAB, IND, RULES } = RPT.getCatalog();
 const { importFile2 } = require('./import2');
 
 const PORT = +process.env.PORT || 3000;
@@ -18,11 +20,27 @@ const STATELESS = process.env.STATELESS_AUTH === '1';
 const NEXT = { country: 'university', university: 'county', county: 'center', center: 'base', base: 'house' };
 const TYPE_FA = { country: 'ستاد کشوری', university: 'دانشگاه علوم پزشکی', county: 'شهرستان / مرکز بهداشت', center: 'مرکز خدمات جامع سلامت', base: 'پایگاه سلامت', house: 'خانه‌ی بهداشت' };
 const ROLE_FA = { expert_ohs: 'کارشناس بهداشت حرفه‌ای', behvarz: 'بهورز', expert_ehs: 'کارشناس بهداشت محیط', responsible_ohs: 'کارشناس مسئول بهداشت حرفه‌ای', manager_ohs: 'مدیر گروه بهداشت حرفه‌ای' };
+const ROLES = ['expert_ohs', 'behvarz', 'expert_ehs', 'responsible_ohs', 'manager_ohs'];
 const MANAGER_ROLES = new Set(['responsible_ohs', 'manager_ohs']);
 const isManagerRole = (r) => MANAGER_ROLES.has(r);
 const STATUS_FA = { draft: 'پیش‌نویس', submitted: 'ارسال‌شده — منتظر تأیید', approved: 'تأییدشده (قفل)', returned: 'برگشت‌خورده برای اصلاح' };
 const KPIS = ['PCT-B', 'PCT-C', 'PCT-D', 'PCT-E', 'PCT-F', 'PCT-H'];
-const TABLES = Object.fromEntries(TAB.tables.map(t => [t.key, t]));
+let TABLES = Object.fromEntries(TAB.tables.map(t => [t.key, t]));
+const CAT_KINDS = ['layout', 'indicators', 'report', 'tables', 'rules'];
+function refreshCatalog() { ({ CAT, REP, TAB, IND, RULES } = RPT.getCatalog()); TABLES = Object.fromEntries(TAB.tables.map(t => [t.key, t])); }
+const catalogState = () => ({ layout: CAT.layout, indicators: CAT.indicators, report: REP, tables: TAB.tables, rules: RULES });
+function persistCatalog() {
+  const d = catalogState();
+  for (const k of CAT_KINDS) db.prepare('INSERT INTO catalog_edit(kind,data,updated_at) VALUES(?,?,?) ON CONFLICT(kind) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at')
+    .run(k, JSON.stringify(d[k]), now());
+}
+try {
+  const patch = {};
+  for (const r of db.prepare('SELECT kind,data FROM catalog_edit').all()) if (CAT_KINDS.includes(r.kind)) {
+    const v = JSON.parse(r.data); if (Array.isArray(v)) patch[r.kind] = v;
+  }
+  if (Object.keys(patch).length) { RPT.setCatalog(patch); refreshCatalog(); }
+} catch (e) { console.error('catalog_edit ignored:', e.message); }
 
 // ---------- helpers
 const send = (res, code, obj, headers = {}) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); };
@@ -130,6 +148,74 @@ function applyEntry(user, per, ind, raw, unit = user.unit_id) {
 // ---------- مسیرها
 const routes = [];
 const R = (m, p, h, o = {}) => routes.push({ m, re: new RegExp('^' + p.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), h, auth: o.auth !== false, big: !!o.big });
+// نمایش فرمول به شکلی که دوباره توسط parseFormula خوانده شود؛ پرانتزهای اضافیِ SUM در توکنهای متنی حذف میشوند
+function formulaText(toks) {
+  let close = 0;
+  return (toks || []).map(t => {
+    if (t[0] === 's') return 'SUM(' + (t[1] || []).join(',') + ')';
+    if (t[0] === 'r') return 'R(' + t[1] + ')';
+    let lit = String(t[1] || '');
+    const opens = (lit.match(/SUM\(/g) || []).length;
+    if (opens) { lit = lit.replace(/SUM\(/g, ''); close += opens; }
+    while (close > 0 && lit.startsWith(')')) { lit = lit.slice(1); close--; }
+    return lit;
+  }).join('');
+}
+function parseFormula(input) {
+  const s = String(input || ''), out = []; let buf = '', i = 0;
+  const flush = () => { if (!buf) return; if (!/^[\d\s+\-*/().,%]*$/.test(buf)) throw new Error('فرمول فقط شامل عدد، عملگرها، SUM(...) و R(...) باشد.'); out.push(['l', buf]); buf = ''; };
+  while (i < s.length) {
+    if (s.startsWith('SUM(', i)) { flush(); const j = s.indexOf(')', i + 4); if (j < 0) throw new Error('پرانتز SUM بسته نشده است.'); const ids = s.slice(i + 4, j).split(',').map(x => x.trim()).filter(Boolean); if (!ids.length) throw new Error('SUM خالی است.'); out.push(['s', ids]); i = j + 1; continue; }
+    if (s.startsWith('R(', i)) { flush(); const j = s.indexOf(')', i + 2); if (j < 0) throw new Error('پرانتز R بسته نشده است.'); const code = s.slice(i + 2, j).trim(); if (!code) throw new Error('کد شاخص محاسباتی خالی است.'); out.push(['r', code]); i = j + 1; continue; }
+    if ((s[i] === 'R' || s[i] === 'r') && s[i + 1] === ':') { flush(); let j = i + 2; while (j < s.length && /[\w-]/.test(s[j])) j++; out.push(['r', s.slice(i + 2, j)]); i = j; continue; }
+    buf += s[i++];
+  }
+  flush(); if (!out.length) throw new Error('فرمول خالی است.'); return out;
+}
+function normCatItem(kind, raw, key, st) {
+  const r = raw || {}, s = (v, n = 200) => str(v, n);
+  if (kind === 'layout') {
+    if (r.t === 'sec') { const title = s(r.title), blk = s(r.blk, 20); if (!title || !blk) throw new Error('عنوان و کد بخش الزامی است.'); return { t: 'sec', title, blk }; }
+    if (r.t === 'sub') { const title = s(r.title), blk = s(r.blk, 20), k = s(r.key, 300); if (!title || !blk || !k) throw new Error('عنوان، کد بخش و کلید subsection الزامی است.'); return { t: 'sub', title, blk, key: k }; }
+    if (r.t === 'ind') { const id = s(r.id, 50); if (!IND[id]) throw new Error('شاخصی با این کد وجود ندارد.'); return { t: 'ind', id }; }
+    throw new Error('نوع ردیف نامعتبر است.');
+  }
+  if (kind === 'indicators') {
+    const id = s(key || r.id, 50); if (!/^[A-Za-z0-9_-]{1,50}$/.test(id)) throw new Error('کد شاخص نامعتبر است.');
+    if (!key && IND[id]) throw new Error('کد شاخص تکراری است.');
+    const title = s(r.title); if (!title) throw new Error('عنوان شاخص الزامی است.');
+    return { id, title, kind: ['num', 'text'].includes(r.kind) ? r.kind : 'num', blk: s(r.blk, 20) || id.split('-')[0], src: s(r.src, 20) };
+  }
+  if (kind === 'report') {
+    const code = s(key || r.code, 50); if (!/^[A-Za-z0-9_-]{1,50}$/.test(code)) throw new Error('کد گزارش نامعتبر است.');
+    if (!key && REP.some(x => x.code === code)) throw new Error('کد گزارش تکراری است.');
+    const title = s(r.title); if (!title) throw new Error('عنوان گزارش الزامی است.');
+    return { code, title, section: s(r.section), pct: !!r.pct, toks: parseFormula(r.formula) };
+  }
+  if (kind === 'tables') {
+    const k = s(key || r.key, 50); if (!/^[A-Za-z0-9_-]{1,50}$/.test(k)) throw new Error('کلید جدول نامعتبر است.');
+    if (!key && TAB.tables.some(x => x.key === k)) throw new Error('کلید جدول تکراری است.');
+    let cols = r.cols, imp = r.import;
+    if (typeof cols === 'string') cols = JSON.parse(cols); if (typeof imp === 'string') imp = JSON.parse(imp);
+    if (!Array.isArray(cols) || !cols.length) throw new Error('ستونهای جدول الزامی است.');
+    cols = cols.map(x => {
+      const type = ['num', 'text', 'mark', 'list'].includes(x.type) ? x.type : 'text';
+      const c = { k: s(x.k, 40), label: s(x.label, 100), type, group: s(x.group, 100) };
+      if (type === 'list') c.options = (Array.isArray(x.options) ? x.options : []).map(o => [s(o[0], 40), s(o[1], 100)]);
+      return c;
+    });
+    if (cols.some(x => !x.k || !x.label)) throw new Error('کلید و عنوان هر ستون الزامی است.');
+    return { key: k, title: s(r.title, 200) || k, sheet: s(r.sheet, 200), cols, import: imp && typeof imp === 'object' ? imp : {} };
+  }
+  if (kind === 'rules') {
+    const a = s(r.a, 50), b = Array.isArray(r.b) ? r.b.map(x => s(x, 50)) : String(r.b || '').split(/[،,\s]+/).filter(Boolean);
+    if (!IND[a] || !b.length || b.some(x => !IND[x])) throw new Error('شاخصهای قاعده معتبر نیستند.');
+    return { a, b };
+  }
+  throw new Error('نوع کاتالوگ نامعتبر است.');
+}
+const catIndex = (arr, kind, key) => (kind === 'layout' || kind === 'rules' ? +key : arr.findIndex(x => (kind === 'indicators' ? x.id : kind === 'report' ? x.code : x.key) === key));
+function applyCatalog(patch) { RPT.setCatalog(patch); refreshCatalog(); persistCatalog(); }
  
 R('GET', '/healthz', (c) => send(c.res, 200, { ok: true, ts: Date.now() }), { auth: false });
 R('GET', '/api/health', (c) => send(c.res, 200, { ok: true, ts: Date.now() }), { auth: false });
@@ -138,6 +224,44 @@ R('GET', '/api/catalog', (c) => send(c.res, 200, {
   report: REP.map(r => ({ code: r.code, title: r.title, section: r.section, pct: r.pct })), rules: RULES,
   tables: TAB.tables.map(t => ({ key: t.key, title: t.title, cols: t.cols })), typeFa: TYPE_FA, roleFa: ROLE_FA, statusFa: STATUS_FA, kpis: KPIS
 }), { auth: false });
+R('GET', '/api/catalog/manage', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'اجازه ندارید.');
+  const d = catalogState();
+  send(c.res, 200, { ...d, report: d.report.map(r => ({ ...r, formula: formulaText(r.toks) })) });
+});
+R('POST', '/api/catalog/reset', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'اجازه ندارید.');
+  db.prepare('DELETE FROM catalog_edit').run(); RPT.resetCatalog(); refreshCatalog(); persistCatalog();
+  audit(c.u.id, 'catalog_reset', {}, c.ip); send(c.res, 200, { ok: true });
+});
+R('POST', '/api/catalog/:kind', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'اجازه ندارید.');
+  const kind = c.p.kind; if (!CAT_KINDS.includes(kind)) return fail(c.res, 400, 'نوع کاتالوگ نامعتبر است.');
+  let item; try { item = normCatItem(kind, c.b.item || c.b, null, catalogState()); } catch (e) { return fail(c.res, 400, e.message); }
+  const patch = { [kind]: [...catalogState()[kind], item] };
+  applyCatalog(patch); audit(c.u.id, 'catalog_add', { kind }, c.ip); send(c.res, 200, { ok: true });
+});
+R('PUT', '/api/catalog/:kind/:key', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'اجازه ندارید.');
+  const kind = c.p.kind, key = c.p.key; if (!CAT_KINDS.includes(kind)) return fail(c.res, 400, 'نوع کاتالوگ نامعتبر است.');
+  const arr = [...catalogState()[kind]], idx = catIndex(arr, kind, key); if (!(idx >= 0)) return fail(c.res, 404, 'ردیف پیدا نشد.');
+  let item; try { item = normCatItem(kind, c.b.item || c.b, kind === 'layout' || kind === 'rules' ? null : key, catalogState()); } catch (e) { return fail(c.res, 400, e.message); }
+  arr[idx] = item; applyCatalog({ [kind]: arr }); audit(c.u.id, 'catalog_edit', { kind, key }, c.ip); send(c.res, 200, { ok: true });
+});
+R('DELETE', '/api/catalog/:kind/:key', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'اجازه ندارید.');
+  const kind = c.p.kind, key = c.p.key; if (!CAT_KINDS.includes(kind)) return fail(c.res, 400, 'نوع کاتالوگ نامعتبر است.');
+  const st = catalogState(), arr = [...st[kind]], idx = catIndex(arr, kind, key); if (!(idx >= 0)) return fail(c.res, 404, 'ردیف پیدا نشد.');
+  const patch = { [kind]: arr.filter((_, i) => i !== idx) };
+  if (kind === 'layout') {
+    const cut = new Set([idx]); const it = arr[idx];
+    if (it.t === 'sec') for (let i = idx + 1; i < arr.length && arr[i].t !== 'sec'; i++) cut.add(i);
+    if (it.t === 'sub') for (let i = idx + 1; i < arr.length && arr[i].t === 'ind'; i++) cut.add(i);
+    patch.layout = arr.filter((_, i) => !cut.has(i));
+  }
+  if (kind === 'indicators') patch.layout = st.layout.filter(x => x.t !== 'ind' || x.id !== key);
+  applyCatalog(patch); audit(c.u.id, 'catalog_del', { kind, key }, c.ip); send(c.res, 200, { ok: true });
+});
 R('GET', '/api/me', (c) => send(c.res, 200, { user: publicUser(c.u), csrf: c.s.csrf }));
 
 // --- ثبت‌نام و ورود
@@ -249,22 +373,68 @@ R('POST', '/api/units/:id/rename', (c) => {
 });
 R('DELETE', '/api/units/:id', (c) => {
   const u = unitOf(+c.p.id);
-  if (!u || !canManage(c.u, u.id, 'expert') || (+u.id === c.u.unit_id && !isRoot(u))) return fail(c.res, 403, 'اجازه ندارید.');
-  // cascade: delete all descendants
-  const ids = subtreeIds(u.id);
-  const ph = inList(ids);
-  db.prepare(`DELETE FROM entries WHERE unit_id IN (${ph})`).run(...ids);
-  db.prepare(`DELETE FROM entry_history WHERE unit_id IN (${ph})`).run(...ids);
-  db.prepare(`DELETE FROM submissions WHERE unit_id IN (${ph})`).run(...ids);
-  db.prepare(`DELETE FROM records WHERE unit_id IN (${ph})`).run(...ids);
-  db.prepare(`DELETE FROM units WHERE id IN (${ph})`).run(...ids);
-  audit(c.u.id, 'unit_del', { id: u.id, count: ids.length }, c.ip); send(c.res, 200, { ok: true });
+  if (!u || isRoot(u) || !canManage(c.u, u.id, 'expert') || (+u.id === c.u.unit_id && !isRoot(u))) return fail(c.res, 403, 'اجازه ندارید یا واحد ریشه قابل حذف نیست.');
+  // cascade: delete all descendants; people and invitations move to the parent so no FK breaks
+  const ids = subtreeIds(u.id), ph = inList(ids), parent = u.parent_id;
+  tx(() => {
+    for (const t of ['users', 'allow', 'sameh_experts']) db.prepare(`UPDATE ${t} SET unit_id=? WHERE unit_id IN (${ph})`).run(parent, ...ids);
+    db.prepare(`DELETE FROM entries WHERE unit_id IN (${ph})`).run(...ids);
+    db.prepare(`DELETE FROM entry_history WHERE unit_id IN (${ph})`).run(...ids);
+    db.prepare(`DELETE FROM submissions WHERE unit_id IN (${ph})`).run(...ids);
+    db.prepare(`DELETE FROM records WHERE unit_id IN (${ph})`).run(...ids);
+    db.prepare(`DELETE FROM units WHERE id IN (${ph})`).run(...ids);
+  });
+  audit(c.u.id, 'unit_del', { id: u.id, count: ids.length, moved_to: parent }, c.ip); send(c.res, 200, { ok: true });
 });
 
 // --- فهرست مجاز، کاربران، بارگذاری گروهی
 R('GET', '/api/allow', (c) => {
   if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = scopeOf(c.u); send(c.res, 200, db.prepare(`SELECT id,nid_last4,unit_id,role,note,used FROM allow WHERE unit_id IN (${inList(ids)}) ORDER BY id DESC`).all(...ids));
+});
+R('GET', '/api/sameh-experts', (c) => {
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const ids = scopeOf(c.u), q = str(c.q.q, 60).replace(/[%_]/g, '');
+  const where = `unit_id IN (${inList(ids)})` + (q ? ' AND (full_name LIKE ? OR phone LIKE ? OR username LIKE ? OR nid_last4 LIKE ?)' : '');
+  const args = [...ids, ...(q ? Array(4).fill('%' + q + '%') : [])];
+  const rows = db.prepare(`SELECT id,source_id,full_name,nid_last4,phone,username,role,unit_id FROM sameh_experts WHERE ${where} ORDER BY full_name`).all(...args);
+  send(c.res, 200, rows);
+});
+function samehFields(b, fallback = {}) {
+  const full_name = str(b.full_name, 100);
+  if (!full_name) return null;
+  const unit_id = +b.unit_id || +fallback.unit_id;
+  if (!unit_id) return null;
+  const role = ROLES.includes(b.role) ? b.role : (ROLES.includes(fallback.role) ? fallback.role : 'expert_ohs');
+  const last4 = L.faDigits(String(b.nid_last4 ?? fallback.nid_last4 ?? '')).trim().slice(-4);
+  return { full_name, unit_id, role, nid_last4: /^\d{1,4}$/.test(last4) ? last4.padStart(4, '0') : '', phone: str(b.phone, 20), username: str(b.username, 60), source_id: str(b.source_id, 80) || String(fallback.source_id || 'manual-' + now()) };
+}
+R('POST', '/api/sameh-experts', (c) => {
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const f = samehFields(c.b); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
+  if (!canManage(c.u, f.unit_id, f.role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
+  try {
+    const r = db.prepare('INSERT INTO sameh_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run(f.source_id, f.full_name, f.nid_last4, f.phone, f.username, f.role, f.unit_id, str(c.b.source, 40) || 'manual', now());
+    audit(c.u.id, 'sameh_expert_add', { id: +r.lastInsertRowid, unit: f.unit_id }, c.ip); send(c.res, 200, { id: +r.lastInsertRowid });
+  } catch (e) { fail(c.res, 400, 'شناسه منبع تکراری است.'); }
+});
+R('PUT', '/api/sameh-experts/:id', (c) => {
+  const old = db.prepare('SELECT * FROM sameh_experts WHERE id=?').get(+c.p.id);
+  if (!old || !canManage(c.u, old.unit_id, old.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const f = samehFields(c.b, old); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
+  if (!canManage(c.u, f.unit_id, f.role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
+  try {
+    db.prepare('UPDATE sameh_experts SET source_id=?,full_name=?,nid_last4=?,phone=?,username=?,role=?,unit_id=? WHERE id=?')
+      .run(f.source_id, f.full_name, f.nid_last4, f.phone, f.username, f.role, f.unit_id, old.id);
+    audit(c.u.id, 'sameh_expert_edit', { id: old.id, unit: f.unit_id }, c.ip); send(c.res, 200, { ok: true });
+  } catch (e) { fail(c.res, 400, 'شناسه منبع تکراری است.'); }
+});
+R('DELETE', '/api/sameh-experts/:id', (c) => {
+  const x = db.prepare('SELECT * FROM sameh_experts WHERE id=?').get(+c.p.id);
+  if (!x || !canManage(c.u, x.unit_id, x.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  db.prepare('DELETE FROM sameh_experts WHERE id=?').run(x.id);
+  audit(c.u.id, 'sameh_expert_del', { id: x.id }, c.ip); send(c.res, 200, { ok: true });
 });
 function addAllow(actor, nidRaw, unit, role, note) {
   const nid = L.validNid(nidRaw); if (!nid) return 'کد ملی معتبر نیست';
@@ -273,9 +443,19 @@ function addAllow(actor, nidRaw, unit, role, note) {
   catch (e) { return 'این کد ملی قبلاً در فهرست مجاز ثبت شده است'; }
 }
 R('POST', '/api/allow', (c) => {
-  const role = MANAGER_ROLES.has(c.b.role) ? c.b.role : (['expert_ohs','behvarz','expert_ehs','responsible_ohs','manager_ohs'].includes(c.b.role) ? c.b.role : 'expert_ohs');
+  const role = ROLES.includes(c.b.role) ? c.b.role : 'expert_ohs';
   const err = addAllow(c.u, c.b.nid, +c.b.unit_id, role, c.b.note);
   if (err) return fail(c.res, 400, err); audit(c.u.id, 'allow_add', { unit: +c.b.unit_id, role }, c.ip); send(c.res, 200, { ok: true });
+});
+R('PUT', '/api/allow/:id', (c) => {
+  const a = db.prepare('SELECT * FROM allow WHERE id=?').get(+c.p.id);
+  if (!a || !canManage(c.u, a.unit_id, a.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const unit = +c.b.unit_id || a.unit_id, role = ROLES.includes(c.b.role) ? c.b.role : a.role;
+  if (!canManage(c.u, unit, role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
+  if (a.used && (unit !== a.unit_id || role !== a.role)) return fail(c.res, 400, 'کد ملی ثبت‌نام کرده است؛ واحد و نقش آن قابل تغییر نیست.');
+  const note = str(c.b.note, 100);
+  db.prepare('UPDATE allow SET unit_id=?,role=?,note=? WHERE id=?').run(unit, role, note, a.id);
+  audit(c.u.id, 'allow_edit', { id: a.id, unit, role }, c.ip); send(c.res, 200, { ok: true });
 });
 function parseTable(b) {
   if (b.csv) {
@@ -336,6 +516,56 @@ R('GET', '/api/users', (c) => {
   const rows = db.prepare(`SELECT * FROM users WHERE unit_id IN (${inList(ids)}) ORDER BY status,id DESC`).all(...ids).filter(u => u.id !== c.u.id && canManage(c.u, u.unit_id, u.role));
   send(c.res, 200, rows.map(u => ({ ...publicUser(u), email: u.email, phone: u.phone, totp_ok: !!u.totp_ok, last_login: u.last_login, nid: u.status === 'pending' ? L.dec(u.nid_enc) : undefined, unit_name: unitOf(u.unit_id).name })));
 });
+const userEmailOk = (email) => { const dom = String(email || '').split('@')[1]; return !!dom && DOMAINS.some(d => dom === d || dom.endsWith('.' + d)); };
+R('POST', '/api/users', (c) => {
+  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const nid = L.validNid(c.b.nid), name = str(c.b.full_name, 100), email = str(c.b.email, 120).toLowerCase(), phone = str(c.b.phone, 20), pw = String(c.b.password || '');
+  const unit = +c.b.unit_id, role = ROLES.includes(c.b.role) ? c.b.role : 'expert_ohs', status = ['pending', 'active', 'rejected', 'suspended'].includes(c.b.status) ? c.b.status : 'pending';
+  if (!nid || !name || !userEmailOk(email) || !strongPw(pw)) return fail(c.res, 400, 'کد ملی معتبر، نام، ایمیل سازمانی و رمز حداقل ۱۲ کاراکتر شامل حرف و عدد الزامی است.');
+  if (!canManage(c.u, unit, role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
+  if (db.prepare('SELECT 1 FROM users WHERE nid_hash=?').get(L.hmac(nid))) return fail(c.res, 400, 'کاربری با این کد ملی وجود دارد.');
+  const secret = L.newTotpSecret(); let id;
+  tx(() => {
+    const r = db.prepare(`INSERT INTO users(nid_hash,nid_enc,nid_last4,full_name,phone,email,unit_id,role,pw_hash,totp_enc,totp_ok,status,approved_by,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(L.hmac(nid), L.enc(nid), nid.slice(-4), name, phone, email, unit, role, L.hashPw(pw), L.enc(secret), 1, status, status === 'active' ? c.u.id : null, now());
+    id = +r.lastInsertRowid;
+    db.prepare('UPDATE allow SET used=1 WHERE nid_hash=?').run(L.hmac(nid));
+  });
+  audit(c.u.id, 'user_add', { id, unit, role, status }, c.ip); send(c.res, 200, { id, totp_secret: secret, otpauth: `otpauth://totp/AmarSalamat:${nid.slice(-4)}?secret=${secret}&issuer=AmarSalamat` });
+});
+R('PUT', '/api/users/:id', (c) => {
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id);
+  if (!u || !canManage(c.u, u.unit_id, u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  const self = u.id === c.u.id;
+  const unit = +c.b.unit_id || u.unit_id, role = ROLES.includes(c.b.role) ? c.b.role : u.role;
+  const name = str(c.b.full_name, 100) || u.full_name, email = str(c.b.email, 120).toLowerCase() || u.email, phone = str(c.b.phone, 20);
+  if (!canManage(c.u, unit, role) || (self && (unit !== u.unit_id || role !== u.role))) return fail(c.res, 403, 'نقش یا واحد نامعتبر است.');
+  if (!userEmailOk(email)) return fail(c.res, 400, 'ایمیل باید سازمانی (ac.ir / gov.ir) باشد.');
+  const status = c.b.status === undefined ? u.status : c.b.status;
+  if (!['pending', 'active', 'rejected', 'suspended'].includes(status)) return fail(c.res, 400, 'وضعیت نامعتبر.');
+  if (self && status !== u.status) return fail(c.res, 403, 'وضعیت خودتان را تغییر ندهید.');
+  const pw = String(c.b.password || ''); if (pw && !strongPw(pw)) return fail(c.res, 400, 'رمز حداقل ۱۲ کاراکتر و شامل حرف و عدد باشد.');
+  const reset = !!c.b.reset_totp, secret = reset ? L.newTotpSecret() : null, totpOk = reset || !!u.totp_ok;
+  if (status === 'active' && !totpOk) return fail(c.res, 400, 'کاربر هنوز برنامه‌ی احراز هویت را تأیید نکرده است.');
+  tx(() => {
+    db.prepare(`UPDATE users SET full_name=?,phone=?,email=?,unit_id=?,role=?,status=?,totp_enc=?,totp_ok=?,approved_by=?,pw_hash=? WHERE id=?`)
+      .run(name, phone, email, unit, role, status, reset ? L.enc(secret) : u.totp_enc, totpOk ? 1 : 0, status === 'active' ? c.u.id : u.approved_by, pw ? L.hashPw(pw) : u.pw_hash, u.id);
+    if (unit !== u.unit_id || role !== u.role) db.prepare('UPDATE allow SET unit_id=?,role=? WHERE nid_hash=?').run(unit, role, u.nid_hash);
+    if (status !== 'active') db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
+  });
+  audit(c.u.id, 'user_edit', { id: u.id, unit, role, status, reset_totp: reset }, c.ip);
+  send(c.res, 200, { ok: true, ...(secret ? { totp_secret: secret, otpauth: `otpauth://totp/AmarSalamat:${u.nid_last4}?secret=${secret}&issuer=AmarSalamat` } : {}) });
+});
+R('DELETE', '/api/users/:id', (c) => {
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id);
+  if (!u || u.id === c.u.id || !canManage(c.u, u.unit_id, u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  tx(() => {
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
+    db.prepare('UPDATE allow SET used=0 WHERE nid_hash=?').run(u.nid_hash);
+    db.prepare('DELETE FROM users WHERE id=?').run(u.id);
+  });
+  audit(c.u.id, 'user_del', { id: u.id }, c.ip); send(c.res, 200, { ok: true });
+});
 R('POST', '/api/users/:id/status', (c) => {
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id), st = c.b.status;
   if (!u || !canManage(c.u, u.unit_id, u.role) || u.id === c.u.id) return fail(c.res, 403, 'اجازه ندارید.');
@@ -394,6 +624,15 @@ R('GET', '/api/entries', (c) => {
 R('PUT', '/api/entries', (c) => {
   const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
   const e = applyEntry(c.u, c.b.period, String(c.b.ind || ''), c.b.value, unit); if (e) return fail(c.res, 400, e); send(c.res, 200, { ok: true });
+});
+R('DELETE', '/api/entries', (c) => {
+  const unit = +c.b.unit || c.u.unit_id; if (!inScope(c.u, unit) || (!isManagerRole(c.u.role) && unit !== c.u.unit_id)) return fail(c.res, 403, 'اجازه ندارید.');
+  const ind = String(c.b.ind || '');
+  if (!IND[ind]) return fail(c.res, 400, 'شاخص نامعتبر.');
+  const old = db.prepare('SELECT value FROM entries WHERE period_id=? AND unit_id=? AND ind_id=?').get(+c.b.period, unit, ind);
+  if (!old) return send(c.res, 200, { ok: true, deleted: false });
+  const e = applyEntry(c.u, c.b.period, ind, '', unit); if (e) return fail(c.res, 400, e);
+  audit(c.u.id, 'entry_del', { period: +c.b.period, unit, ind }, c.ip); send(c.res, 200, { ok: true, deleted: true });
 });
 R('POST', '/api/entries/batch', (c) => {          // برای ارسال صف آفلاین
   const items = Array.isArray(c.b.items) ? c.b.items.slice(0, 500) : [], res = [];
@@ -456,6 +695,14 @@ R('POST', '/api/approvals/decide', (c) => {
   else return fail(c.res, 400, 'عملیات نامعتبر.');
   db.prepare('UPDATE submissions SET status=?,decided_by=?,decided_at=?,note=? WHERE period_id=? AND unit_id=?').run(act === 'approve' ? 'approved' : 'returned', c.u.id, now(), note || null, per.id, unit);
   audit(c.u.id, 'decision_' + act, { period: per.id, unit, note }, c.ip); send(c.res, 200, { ok: true });
+});
+R('DELETE', '/api/submissions', (c) => {
+  const per = db.prepare('SELECT * FROM periods WHERE id=?').get(+c.b.period), unit = +c.b.unit || c.u.unit_id;
+  if (!per || per.status !== 'open') return fail(c.res, 400, 'این دوره بسته است.');
+  if (!canDecide(c.u, unit)) return fail(c.res, 403, 'اجازه ندارید.');
+  const s = getSub(per.id, unit); if (s.status === 'draft') return send(c.res, 200, { ok: true, deleted: false });
+  db.prepare('DELETE FROM submissions WHERE period_id=? AND unit_id=?').run(per.id, unit);
+  audit(c.u.id, 'submission_del', { period: per.id, unit, status: s.status }, c.ip); send(c.res, 200, { ok: true, deleted: true });
 });
 R('GET', '/api/inbox', (c) => {
   const o = { returned: 0, pendingApprovals: 0, pendingUsers: 0, note: null };
