@@ -123,18 +123,18 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   assert.equal((await root.call('POST', '/api/profile', { unit_type: 'county', hide: [sub.key] })).s, 200);
   assert((await exA.call('GET', '/api/profile')).j.hidden.includes(sub.key));
   assert.equal((await exA.call('POST', '/api/profile', { unit_type: 'county', show: [sub.key] })).s, 403);
-  // ----- کارشناسان رسمی سامح (نمای جداگانه در کاربران و دسترسی)
+  // ----- کارشناسان واردشده (نمای جداگانه در کاربران و دسترسی)
   const testDb = require('../db').db;
-  testDb.prepare('INSERT INTO sameh_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
-    .run('test-1', 'کارشناس تست سامح', '1234', '09120000000', 'test', 'expert_ohs', county('مهاباد').id, 'sameh', Date.now());
-  r = await root.call('GET', '/api/sameh-experts?q=' + encodeURIComponent('کارشناس تست'));
-  assert.equal(r.s, 200); assert.equal(r.j.length, 1); assert.equal(r.j[0].full_name, 'کارشناس تست سامح');
-  assert.equal((await exA.call('GET', '/api/sameh-experts')).s, 403);
+  testDb.prepare('INSERT INTO imported_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+    .run('test-1', 'کارشناس تست واردشده', '1234', '09120000000', 'test', 'expert_ohs', county('مهاباد').id, 'imported', Date.now());
+  r = await root.call('GET', '/api/imported-experts?q=' + encodeURIComponent('کارشناس تست'));
+  assert.equal(r.s, 200); assert.equal(r.j.length, 1); assert.equal(r.j[0].full_name, 'کارشناس تست واردشده');
+  assert.equal((await exA.call('GET', '/api/imported-experts')).s, 403);
   const sx = { full_name: 'کارشناس تست جدید', nid_last4: '5678', phone: '09120000008', username: 'new', role: 'expert_ohs', unit_id: county('مهاباد').id, source_id: 'test-crud-1' };
-  r = await root.call('POST', '/api/sameh-experts', sx); assert.equal(r.s, 200, JSON.stringify(r.j)); const sxid = r.j.id;
-  r = await root.call('PUT', `/api/sameh-experts/${sxid}`, { ...sx, full_name: 'کارشناس تست ویرایش' }); assert.equal(r.s, 200, JSON.stringify(r.j));
-  assert((await root.call('GET', '/api/sameh-experts?q=' + encodeURIComponent('ویرایش'))).j.some(x => x.id === sxid));
-  assert.equal((await root.call('DELETE', `/api/sameh-experts/${sxid}`)).s, 200);
+  r = await root.call('POST', '/api/imported-experts', sx); assert.equal(r.s, 200, JSON.stringify(r.j)); const sxid = r.j.id;
+  r = await root.call('PUT', `/api/imported-experts/${sxid}`, { ...sx, full_name: 'کارشناس تست ویرایش' }); assert.equal(r.s, 200, JSON.stringify(r.j));
+  assert((await root.call('GET', '/api/imported-experts?q=' + encodeURIComponent('ویرایش'))).j.some(x => x.id === sxid));
+  assert.equal((await root.call('DELETE', `/api/imported-experts/${sxid}`)).s, 200);
   // ----- جدول‌های فایل ۲
   const tb = (await root.call('GET', '/api/catalog')).j.tables, acc = tb.find(t => t.key === 'accident');
   const sexCol = acc.cols.find(c => c.label === 'جنس'), ageCol = acc.cols.find(c => c.label === 'سن');

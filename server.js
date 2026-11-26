@@ -377,7 +377,7 @@ R('DELETE', '/api/units/:id', (c) => {
   // cascade: delete all descendants; people and invitations move to the parent so no FK breaks
   const ids = subtreeIds(u.id), ph = inList(ids), parent = u.parent_id;
   tx(() => {
-    for (const t of ['users', 'allow', 'sameh_experts']) db.prepare(`UPDATE ${t} SET unit_id=? WHERE unit_id IN (${ph})`).run(parent, ...ids);
+    for (const t of ['users', 'allow', 'imported_experts']) db.prepare(`UPDATE ${t} SET unit_id=? WHERE unit_id IN (${ph})`).run(parent, ...ids);
     db.prepare(`DELETE FROM entries WHERE unit_id IN (${ph})`).run(...ids);
     db.prepare(`DELETE FROM entry_history WHERE unit_id IN (${ph})`).run(...ids);
     db.prepare(`DELETE FROM submissions WHERE unit_id IN (${ph})`).run(...ids);
@@ -392,15 +392,15 @@ R('GET', '/api/allow', (c) => {
   if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = scopeOf(c.u); send(c.res, 200, db.prepare(`SELECT id,nid_last4,unit_id,role,note,used FROM allow WHERE unit_id IN (${inList(ids)}) ORDER BY id DESC`).all(...ids));
 });
-R('GET', '/api/sameh-experts', (c) => {
+R('GET', '/api/imported-experts', (c) => {
   if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
   const ids = scopeOf(c.u), q = str(c.q.q, 60).replace(/[%_]/g, '');
   const where = `unit_id IN (${inList(ids)})` + (q ? ' AND (full_name LIKE ? OR phone LIKE ? OR username LIKE ? OR nid_last4 LIKE ?)' : '');
   const args = [...ids, ...(q ? Array(4).fill('%' + q + '%') : [])];
-  const rows = db.prepare(`SELECT id,source_id,full_name,nid_last4,phone,username,role,unit_id FROM sameh_experts WHERE ${where} ORDER BY full_name`).all(...args);
+  const rows = db.prepare(`SELECT id,source_id,full_name,nid_last4,phone,username,role,unit_id FROM imported_experts WHERE ${where} ORDER BY full_name`).all(...args);
   send(c.res, 200, rows);
 });
-function samehFields(b, fallback = {}) {
+function importedExpertFields(b, fallback = {}) {
   const full_name = str(b.full_name, 100);
   if (!full_name) return null;
   const unit_id = +b.unit_id || +fallback.unit_id;
@@ -409,32 +409,32 @@ function samehFields(b, fallback = {}) {
   const last4 = L.faDigits(String(b.nid_last4 ?? fallback.nid_last4 ?? '')).trim().slice(-4);
   return { full_name, unit_id, role, nid_last4: /^\d{1,4}$/.test(last4) ? last4.padStart(4, '0') : '', phone: str(b.phone, 20), username: str(b.username, 60), source_id: str(b.source_id, 80) || String(fallback.source_id || 'manual-' + now()) };
 }
-R('POST', '/api/sameh-experts', (c) => {
+R('POST', '/api/imported-experts', (c) => {
   if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
-  const f = samehFields(c.b); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
+  const f = importedExpertFields(c.b); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
   if (!canManage(c.u, f.unit_id, f.role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
   try {
-    const r = db.prepare('INSERT INTO sameh_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+    const r = db.prepare('INSERT INTO imported_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
       .run(f.source_id, f.full_name, f.nid_last4, f.phone, f.username, f.role, f.unit_id, str(c.b.source, 40) || 'manual', now());
-    audit(c.u.id, 'sameh_expert_add', { id: +r.lastInsertRowid, unit: f.unit_id }, c.ip); send(c.res, 200, { id: +r.lastInsertRowid });
+    audit(c.u.id, 'imported_expert_add', { id: +r.lastInsertRowid, unit: f.unit_id }, c.ip); send(c.res, 200, { id: +r.lastInsertRowid });
   } catch (e) { fail(c.res, 400, 'شناسه منبع تکراری است.'); }
 });
-R('PUT', '/api/sameh-experts/:id', (c) => {
-  const old = db.prepare('SELECT * FROM sameh_experts WHERE id=?').get(+c.p.id);
+R('PUT', '/api/imported-experts/:id', (c) => {
+  const old = db.prepare('SELECT * FROM imported_experts WHERE id=?').get(+c.p.id);
   if (!old || !canManage(c.u, old.unit_id, old.role)) return fail(c.res, 403, 'اجازه ندارید.');
-  const f = samehFields(c.b, old); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
+  const f = importedExpertFields(c.b, old); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
   if (!canManage(c.u, f.unit_id, f.role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
   try {
-    db.prepare('UPDATE sameh_experts SET source_id=?,full_name=?,nid_last4=?,phone=?,username=?,role=?,unit_id=? WHERE id=?')
+    db.prepare('UPDATE imported_experts SET source_id=?,full_name=?,nid_last4=?,phone=?,username=?,role=?,unit_id=? WHERE id=?')
       .run(f.source_id, f.full_name, f.nid_last4, f.phone, f.username, f.role, f.unit_id, old.id);
-    audit(c.u.id, 'sameh_expert_edit', { id: old.id, unit: f.unit_id }, c.ip); send(c.res, 200, { ok: true });
+    audit(c.u.id, 'imported_expert_edit', { id: old.id, unit: f.unit_id }, c.ip); send(c.res, 200, { ok: true });
   } catch (e) { fail(c.res, 400, 'شناسه منبع تکراری است.'); }
 });
-R('DELETE', '/api/sameh-experts/:id', (c) => {
-  const x = db.prepare('SELECT * FROM sameh_experts WHERE id=?').get(+c.p.id);
+R('DELETE', '/api/imported-experts/:id', (c) => {
+  const x = db.prepare('SELECT * FROM imported_experts WHERE id=?').get(+c.p.id);
   if (!x || !canManage(c.u, x.unit_id, x.role)) return fail(c.res, 403, 'اجازه ندارید.');
-  db.prepare('DELETE FROM sameh_experts WHERE id=?').run(x.id);
-  audit(c.u.id, 'sameh_expert_del', { id: x.id }, c.ip); send(c.res, 200, { ok: true });
+  db.prepare('DELETE FROM imported_experts WHERE id=?').run(x.id);
+  audit(c.u.id, 'imported_expert_del', { id: x.id }, c.ip); send(c.res, 200, { ok: true });
 });
 function addAllow(actor, nidRaw, unit, role, note) {
   const nid = L.validNid(nidRaw); if (!nid) return 'کد ملی معتبر نیست';

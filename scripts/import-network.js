@@ -1,24 +1,24 @@
 'use strict';
-// import-sameh.js — وارد کردن ساختار رسمی سامانه سامح (ارومیه / پیرانشهر)
-// اجرا: node scripts/import-sameh.js
+// import-network.js — وارد کردن ساختار رسمی شبکه (ارومیه / پیرانشهر)
+// اجرا: node scripts/import-network.js
 // این اسکریپت ایکدیگر بار قابل اجرا است و واحدهای رسمی را حفظ میکند.
 const fs = require('node:fs');
 const path = require('node:path');
 const { db, audit, tx } = require('../db');
 
-const SOURCE = path.join(__dirname, '..', 'data', 'sameh-network-piranshahr.json');
+const SOURCE = path.join(__dirname, '..', 'data', 'network-piranshahr.json');
 const ROOT_ID = 1;
 const UNI_ID = 5;
 const COUNTY_ID = 92;
 
-// سه سطح بالای سامح با شناسههای موجود در پایگاهداده نگاشته میشوند.
+// سه سطح بالای ساختار رسمی با شناسههای موجود در پایگاهداده نگاشته میشوند.
 const ID_MAP = {
   '10001': ROOT_ID,
   '1370000001': UNI_ID,
   '1370000836': COUNTY_ID
 };
 
-// ارجاعهای پایلوت قبلی به شناسههای رسمی سامح منتقل میشوند.
+// ارجاعهای پایلوت قبلی به شناسههای رسمی منتقل میشوند.
 const REF_MAP = {
   518: 1370001214, // مرکز خدمات جامع سلامت پسوه
   520: 1370000903, // خانه بهداشت پسوه ۱
@@ -54,12 +54,12 @@ function officialType(x) {
 }
 
 if (!fs.existsSync(SOURCE)) {
-  console.error(`فایل ساختار سامح یافت نشد: ${SOURCE}`);
+  console.error(`فایل ساختار شبکه یافت نشد: ${SOURCE}`);
   process.exit(1);
 }
 
 const raw = JSON.parse(fs.readFileSync(SOURCE, 'utf8'));
-if (!Array.isArray(raw) || !raw.length) throw new Error('ساختار سامح خالی است.');
+if (!Array.isArray(raw) || !raw.length) throw new Error('ساختار شبکه خالی است.');
 
 const units = raw.map((x) => {
   const id = ID_MAP[x.id] !== undefined ? ID_MAP[x.id] : Number(x.id);
@@ -74,7 +74,7 @@ db.exec('PRAGMA defer_foreign_keys=ON');
 const result = { inserted: 0, remapped: 0, removed: 0 };
 
 const run = () => {
-  // ۱) درج واحدهای رسمی با شناسهی ثابت سامح
+  // ۱) درج واحدهای رسمی با شناسهی ثابت
   const ins = db.prepare(`INSERT INTO units(id,parent_id,type,name) VALUES(?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id, type=excluded.type, name=excluded.name
     WHERE units.parent_id IS NOT excluded.parent_id OR units.type IS NOT excluded.type OR units.name IS NOT excluded.name`);
@@ -114,12 +114,12 @@ const run = () => {
     }
   }
 
-  audit(null, 'sameh_import', { file: path.basename(SOURCE), ...result }, 'import');
+  audit(null, 'network_import', { file: path.basename(SOURCE), ...result }, 'import');
 
   return descendantRows.filter((id) => keep.has(id)).length;
 };
 
 const officialUnderCounty = tx(run);
-console.log('ساختار سامح وارد شد:', JSON.stringify(result));
+console.log('ساختار شبکه وارد شد:', JSON.stringify(result));
 console.log('واحدهای رسمی در شهرستان پیرانشهر:', officialUnderCounty);
 console.log('کل واحدها:', db.prepare('SELECT COUNT(*) n FROM units').get().n);

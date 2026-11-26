@@ -20,10 +20,10 @@ if (!db.prepare('SELECT 1 FROM units LIMIT 1').get()) {
   require('./scripts/seed-periods');
   // نمونه مراکز خدمات جامع سلامت (در صورت وجود فایل)
   try { require('./scripts/seed-centers'); } catch (e) { console.warn('seed-centers skipped:', e.message); }
-  // ساختار رسمی سامح: دانشگاه ارومیه / شهرستان پیرانشهر
-  try { require('./scripts/import-sameh'); } catch (e) { console.warn('sameh import skipped:', e.message); }
-  // کارگاه/امکنه و فهرست مجاز کاربران سامح
-  try { require('./scripts/import-sameh-data'); } catch (e) { console.warn('sameh data import skipped:', e.message); }
+  // ساختار رسمی شبکه: دانشگاه ارومیه / شهرستان پیرانشهر
+  try { require('./scripts/import-network'); } catch (e) { console.warn('network import skipped:', e.message); }
+  // کارگاه/اماکن و فهرست مجاز کاربران واردشده
+  try { require('./scripts/import-network-data'); } catch (e) { console.warn('network data import skipped:', e.message); }
 
   console.log('Bootstrap complete. root user:', nid, 'temp password:', pw, 'totp:', secret);
 }

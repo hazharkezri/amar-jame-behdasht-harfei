@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a polished Persian PDF performance report for Piranshahr OHS from Sameh OLAP data."""
+"""Build a polished Persian PDF performance report for Piranshahr OHS from imported OLAP data."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ from reportlab.pdfgen import canvas
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
-SNAPSHOT = DATA / "sameh-ohs-snapshot-1405.json"
-SCHEMA_FILE = DATA / "sameh-ohs-schema.json"
-NETWORK_FILE = DATA / "sameh-network-piranshahr.json"
-EXPERTS_FILE = DATA / "sameh-experts-piranshahr.json"
+SNAPSHOT = DATA / "ohs-snapshot-1405.json"
+SCHEMA_FILE = DATA / "ohs-schema.json"
+NETWORK_FILE = DATA / "network-piranshahr.json"
+EXPERTS_FILE = DATA / "experts-piranshahr.json"
 OUT = ROOT / "reports" / "piranshahr-ohs-performance-1405.pdf"
 
 PAGE_W, PAGE_H = 595.28, 841.89
@@ -619,13 +619,13 @@ class Report:
                   size=30, font="Tahoma-Bold", color=C_WHITE)
         self.text("دوره: ۱ فروردین ۱۴۰۵ تا آخرین دوره ثبت‌شده (مهر ۱۴۰۵)",
                   right=RIGHT - 20, y=PAGE_H - 215, size=12, color=HexColor("#CDE9EE"))
-        self.text(f"آخرین بروزرسانی سامانه سامح: {last_update}", right=RIGHT - 20,
+        self.text(f"آخرین بروزرسانی داده‌ها: {last_update}", right=RIGHT - 20,
                   y=PAGE_H - 238, size=10, color=HexColor("#A9D5DD"))
         self.text("مجموعه شاخص­ها، عملکرد مقایسه­ای مراکز، کارشناسان، نقاط قوت و ضعف و اولویت­ها",
                   right=RIGHT - 20, y=PAGE_H - 285, size=11, color=C_WHITE)
         self.card(MARGIN, 120, PAGE_W - 2 * MARGIN, 120, HexColor("#124E5B"), HexColor("#2E7887"))
         self.text("منبع داده", right=RIGHT - 30, y=210, size=11, font="Tahoma-Bold", color=C_WHITE)
-        self.text("سامانه جامع سلامت الکترونیک محیط و حرفه­ای (سامح) — سطح شبکه بهداشت و درمان پیرانشهر",
+        self.text("سامانه جامع آمار بهداشت حرفه‌ای — سطح شبکه بهداشت و درمان پیرانشهر",
                   right=RIGHT - 30, y=185, size=9.5, color=C_WHITE)
         self.text("استخراج از گزارش OLAP شاخص­ها به همراه جداول مراکز، دسته­بندی بهداشتی، زمان و بازرسان",
                   right=RIGHT - 30, y=165, size=9.5, color=C_WHITE)
@@ -696,7 +696,7 @@ def build():
     # Methodology
     rep.new_page()
     rep.section("روش کار و دامنه داده", "نحوه استخراج، تعریف بازه و محدودیت­ها")
-    rep.para("داده­ها از نشانی سامح و با استفاده از سرویس OLAP مربوط به شاخص­های بهداشت حرفه ای استخراج شد. سطح انتخابی، شبکه بهداشت و درمان شهرستان پیرانشهر با شناسه ۱۳۷۰۰۰۰۸۳۶ است و کلیه مراکز خدمات جامع سلامت تحت پوشش آن وارد مقایسه شدند.")
+    rep.para("داده­ها از خروجی OLAP شاخص­های بهداشت حرفه‌ای استخراج شد. سطح انتخابی، شبکه بهداشت و درمان شهرستان پیرانشهر با شناسه ۱۳۷۰۰۰۰۸۳۶ است و کلیه مراکز خدمات جامع سلامت تحت پوشش آن وارد مقایسه شدند.")
     rep.y -= 8
     rep.para("بازه درخواستی از ۱ فروردین ۱۴۰۵ تا امروز تعریف شد، اما آخرین دوره زمانی ثبت­شده در سامانه، مهر ۱۴۰۵ است. دوره­های فصلی، ششماهه و سالانه به­صورت تجمعی در گزارش لحاظ شده­اند. آخرین بروزرسانی ثبت‌شده در پاسخ سرور "
              f"{last_update} ({last_iso}) است.")
@@ -708,7 +708,7 @@ def build():
         "مقادیر تجمعی سالانه لزوماً برابر جمع مقادیر ماهانه نیستند؛ در برخی شاخص­ها مقدار سالانه تعداد واحدها یا افراد منحصربه­فرد و مقادیر ماهانه تعداد اقدامات است.",
         "برخی شاخص­ها مانند پوشش بازرسان، آموزش شاغلین و کارگاه سالم دارای مقادیر بالای ۱۰۰ درصد هستند که احتمالاً ناشی از تفاوت مخرج ثبت‌شده یا چندبارشماری است؛ این موارد نیاز به اصلاح دارند.",
         "شاخص­های صفر درصد لزوماً به معنای نبود خطر نیستند؛ گاهی به معنای عدم ثبت اندازه­گیری یا عدم بارگذاری نتایج در سامانه است.",
-        "داده­های تماس کارشناسان از فهرست بهروز کارشناسان سامح شهرستان پیرانشهر تکمیل شده است.",
+        "داده­های تماس کارشناسان از فهرست بهروز کارشناسان شهرستان پیرانشهر تکمیل شده است.",
     ]
     for n in notes:
         rep.text("•", right=RIGHT - 2, size=9.5, color=C_PRIMARY)
@@ -891,7 +891,7 @@ def build():
     rep.new_page()
     rep.section("پیشنهادهای اجرایی", "برنامه ۹۰ روزه بهبود شاخص­ها")
     recs = [
-        ("۱. پاک­سازی داده­ها", "بازنگری کلیه شاخص­های دارای مقدار بالای ۱۰۰ یا خالی و اصلاح مخرج شاخص در سامانه سامح."),
+        ("۱. پاک­سازی داده­ها", "بازنگری کلیه شاخص­های دارای مقدار بالای ۱۰۰ یا خالی و اصلاح مخرج شاخص در سامانه."),
         ("۲. تکمیل اندازه­گیری­ها", "انجام اندازه­گیری صدا، ارتعاش، عوامل شیمیایی و پرتوها در کارگاه­های شناسایی‌شده و بارگذاری نتایج."),
         ("۳. پوشش معاینات و آموزش", "تعیین تکلیف شاغلین فاقد معاینه و برگزاری دوره­های آموزشی با ثبت صحیح حضور."),
         ("۴. کاهش کارگاه­های فاقد بازرسی", f"تعیین تکلیف {fmt(by_id['914']['total'],0)} کارگاه بدون بازرسی و برنامه­ریزی بازرسی مجدد بر اساس فاصله زمانی."),
@@ -907,8 +907,8 @@ def build():
         rep.y -= 48
     rep.y -= 6
     rep.section("پیوست: منابع و شناسه­ها")
-    rep.para("کلیه ارقام این گزارش مستقیماً از سرویس report/getOlapReportLegacy سامح و جدول auto/olap_time استخراج شده است. شناسه شبکه شهرستان ۱۳۷۰۰۰۰۸۳۶ و شناسه­های شاخص­ها در جدول­های مربوطه درج شده­اند. نسخه قابل استخراج داده در پرونده data/sameh-ohs-snapshot-1405.json نگهداری می­شود.")
-    rep.para("برای بهروزرسانی گزارش، کافی است پرونده داده مذکور مجدداً از سامح تولید و اسکریپت scripts/build_piranshahr_report.py اجرا شود.")
+    rep.para("کلیه ارقام این گزارش مستقیماً از سرویس گزارش OLAP و جدول زمانی استخراج شده است. شناسه شبکه شهرستان ۱۳۷۰۰۰۰۸۳۶ و شناسه­های شاخص­ها در جدول­های مربوطه درج شده­اند. نسخه قابل استخراج داده در پرونده data/ohs-snapshot-1405.json نگهداری می­شود.")
+    rep.para("برای بهروزرسانی گزارش، کافی است پرونده داده مذکور مجدداً تولید و اسکریپت scripts/build_piranshahr_report.py اجرا شود.")
 
     rep.footer()
     rep.c.save()

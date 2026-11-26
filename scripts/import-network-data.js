@@ -1,6 +1,6 @@
 'use strict';
-// import-sameh-data.js — وارد کردن کارگاه/امکنه و فهرست کاربران سامح
-// اجرا: node scripts/import-sameh-data.js
+// import-network-data.js — وارد کردن کارگاه/اماکن و فهرست کاربران واردشده
+// اجرا: node scripts/import-network-data.js
 // فایل کاربران به دلیل حساسیت کد ملی در موقت نگهداری میشود و وارد جدول مجازها میشود.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -8,10 +8,10 @@ const L = require('../lib');
 const { db, audit, tx } = require('../db');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const FACILITIES_FILE = path.join(DATA_DIR, 'sameh-units-piranshahr.json');
-const EXPERTS_FILE = path.join(DATA_DIR, 'sameh-experts-piranshahr.json');
-// فایل خام کاربران سامح (شامل کد ملی) فقط بهصورت موقت و اختیاری است؛ در استقرارها وجود ندارد.
-const USERS_FILE = process.env.SAMEH_USERS_FILE || 'C:/Users/laptopMad/AppData/Local/Temp/opencode/sameh-users-raw-piranshahr.json';
+const FACILITIES_FILE = path.join(DATA_DIR, 'units-piranshahr.json');
+const EXPERTS_FILE = path.join(DATA_DIR, 'experts-piranshahr.json');
+// فایل خام کاربران (شامل کد ملی) فقط بهصورت موقت و اختیاری است؛ در استقرارها وجود ندارد.
+const USERS_FILE = process.env.USERS_IMPORT_FILE || 'C:/Users/laptopMad/AppData/Local/Temp/opencode/users-raw-piranshahr.json';
 const COUNTY_ID = 92;
 const ID_MAP = { '10001': 1, '1370000001': 5, '1370000836': COUNTY_ID };
 
@@ -49,7 +49,7 @@ function roleForUser(x) {
 }
 
 if (!fs.existsSync(FACILITIES_FILE)) {
-  console.warn(`فایل کارگاهها یافت نشد؛ وارد کردن دادههای سامح رد شد: ${FACILITIES_FILE}`);
+  console.warn(`فایل کارگاهها یافت نشد؛ وارد کردن دادههای شبکه رد شد: ${FACILITIES_FILE}`);
 } else {
   const facilities = JSON.parse(fs.readFileSync(FACILITIES_FILE, 'utf8'));
   const experts = fs.existsSync(EXPERTS_FILE) ? JSON.parse(fs.readFileSync(EXPERTS_FILE, 'utf8')) : [];
@@ -58,7 +58,7 @@ if (!fs.existsSync(FACILITIES_FILE)) {
   const result = { facilities: 0, experts: 0, users: 0, skippedUsers: 0, notedUsers: 0 };
 
   tx(() => {
-    db.prepare("DELETE FROM records WHERE table_key='tashkilat' AND data LIKE '%\"_sameh\":1%'").run();
+    db.prepare("DELETE FROM records WHERE table_key='tashkilat' AND (data LIKE '%\"_imported\":1%' OR data LIKE '%\"_sameh\":1%')").run();
     const ins = db.prepare('INSERT INTO records(table_key,unit_id,data,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,NULL,NULL,?,?)');
     const now = Date.now();
     for (const x of facilities) {
@@ -68,8 +68,8 @@ if (!fs.existsSync(FACILITIES_FILE)) {
         c3: text(x.activityName || x.isic_name),
         c4: workforce(x.staffCount),
         c11: text(x.lastProInspectorId_name),
-        _sameh: 1,
-        _samehId: text(x.id),
+        _imported: 1,
+        _sourceId: text(x.id),
         _network: text(x.network_name),
         _healthCategory: text(x.healthCategory_name),
         _city: text(x.city_name || x.township_name),
@@ -81,14 +81,14 @@ if (!fs.existsSync(FACILITIES_FILE)) {
     }
 
     // فهرست نمایشی کارشناسان (بدون کد ملی) — منبع پایدار برای نمای کاربران
-    const upsertExpert = db.prepare(`INSERT INTO sameh_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at)
+    const upsertExpert = db.prepare(`INSERT INTO imported_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at)
       VALUES(?,?,?,?,?,?,?,?,?)
       ON CONFLICT(source_id) DO UPDATE SET full_name=excluded.full_name,nid_last4=excluded.nid_last4,
         phone=excluded.phone,username=excluded.username,role=excluded.role,unit_id=excluded.unit_id`);
     for (const x of experts) {
       if (!text(x.full_name) || !text(x.source_id)) continue;
       upsertExpert.run(text(x.source_id), text(x.full_name), text(x.nid_last4), text(x.phone), text(x.username),
-        text(x.role) || 'expert_ohs', +x.unit_id || COUNTY_ID, text(x.source) || 'sameh', Date.now());
+        text(x.role) || 'expert_ohs', +x.unit_id || COUNTY_ID, text(x.source) || 'imported', Date.now());
       result.experts++;
     }
 
@@ -100,16 +100,16 @@ if (!fs.existsSync(FACILITIES_FILE)) {
       const nid = text(x.nationalId).replace(/\D/g, '');
       if (!L.validNid(nid) || hasNid('users', L.hmac(nid))) { result.skippedUsers++; continue; }
       const name = `${text(x.firstName)} ${text(x.lastName)}`.trim();
-      const note = `${name || 'کارشناس سامح'} — وارد شده از سامانه سامح`.trim();
+      const note = `${name || 'کارشناس واردشده'} — وارد شده از فهرست رسمی`.trim();
       const hash = L.hmac(nid);
       const changes = insAllow.run(hash, L.enc(nid), nid.slice(-4), COUNTY_ID, roleForUser(x), note, Date.now()).changes;
       result.users += changes;
       result.notedUsers += noteAllow.run(note, hash).changes;
     }
 
-    audit(null, 'sameh_data_import', { ...result, facilitiesFile: path.basename(FACILITIES_FILE) }, 'import');
+    audit(null, 'network_data_import', { ...result, facilitiesFile: path.basename(FACILITIES_FILE) }, 'import');
   });
 
-  console.log('دادههای سامح وارد شد:', JSON.stringify(result));
+  console.log('دادههای شبکه وارد شد:', JSON.stringify(result));
   console.log('کل کارگاهها در جدول تشکیلات:', db.prepare("SELECT COUNT(*) n FROM records WHERE table_key='tashkilat'").get().n);
 }

@@ -1,5 +1,5 @@
 'use strict';
-/* سامانه آمار بهداشت حرفه‌ای — رابط کاربری (بدون وابستگی خارجی، سازگار با CSP سخت‌گیرانه) */
+/* سامانه جامع آمار بهداشت حرفه‌ای — رابط کاربری (بدون وابستگی خارجی، سازگار با CSP سخت‌گیرانه) */
 const S = { cat: null, me: null, csrf: null, per: null, periods: [], tab: null, units: [], inbox: {}, online: navigator.onLine };
 const isMgrRole = (r) => r === 'responsible_ohs' || r === 'manager_ohs';
 const $app = document.getElementById('app');
@@ -99,7 +99,7 @@ async function enter() {
 // ---------- ورود و ثبت‌نام
 function renderLogin(note) {
   clear($app); let mode = 'login';
-  const box = h('div', { class: 'card' }), wrap = h('div', { class: 'login' }, h('h1', {}, 'سامانه‌ی آمار بهداشت حرفه‌ای'), h('p', { class: 'mut' }, 'ویژه‌ی کارشناسان بهداشت حرفه‌ای دانشگاه‌های علوم پزشکی. ورود فقط با کد ملیِ ثبت‌شده در فهرست مجاز، رمز و کد برنامه‌ی احراز هویت.'), note ? msg('warn', note) : null, box);
+  const box = h('div', { class: 'card' }), wrap = h('div', { class: 'login' }, h('h1', {}, 'سامانه جامع آمار بهداشت حرفه‌ای'), h('p', { class: 'mut' }, 'ویژه‌ی کارشناسان بهداشت حرفه‌ای. ورود فقط با کد ملیِ ثبت‌شده در فهرست مجاز، رمز و کد برنامه‌ی احراز هویت.'), note ? msg('warn', note) : null, box);
   $app.append(wrap);
   const draw = () => {
     clear(box);
@@ -484,20 +484,20 @@ async function viewAppr() {
 async function viewUsers() {
   const box = h('div'); $view.append(box);
   async function load() {
-    const [us, al, sx] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/allow'), api('GET', '/api/sameh-experts')]); clear(box);
+    const [us, al, sx] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/allow'), api('GET', '/api/imported-experts')]); clear(box);
     if (us.s !== 200) return box.append(msg('err', us.j.error));
     const pend = us.j.filter(u => u.status === 'pending' && u.totp_ok), SF = { pending: 'در انتظار', active: 'فعال', rejected: 'ردشده', suspended: 'معلق' };
     const setSt = async (u, st) => { const r = await api('POST', `/api/users/${u.id}/status`, { status: st }); if (r.s === 200) { toast('انجام شد'); load(); renderBadges(); } else toast(r.j.error); };
     box.append(h('div', { class: 'card' }, h('h1', {}, 'درخواست‌های در انتظار تأیید شما'),
       pend.length ? h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'واحد', 'کد ملی', 'ایمیل', 'تلفن', ''].map(x => h('th', {}, x))), pend.map(u => h('tr', {}, h('td', {}, u.full_name), h('td', {}, u.unit_name), h('td', { class: 'ltr' }, u.nid), h('td', { class: 'ltr' }, u.email), h('td', { class: 'ltr' }, u.phone), h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm', on: { click: () => { if (confirm(`دسترسی ${u.full_name} (کد ملی ${u.nid}) تأیید شود؟\nبا تأیید، این فرد به آمار واحد «${u.unit_name}» دسترسی می‌یابد.`)) setSt(u, 'active'); } } }, 'تأیید'), h('button', { class: 'b sm red', on: { click: () => setSt(u, 'rejected') } }, 'رد'))))))) : h('p', { class: 'mut' }, 'درخواستی نیست. (کسانی که هنوز برنامه‌ی احراز هویت را تأیید نکرده‌اند اینجا نمی‌آیند.)')));
-    // کارشناسان رسمی سامح — جدای از حسابهای ثبتشده
+    // کارشناسان واردشده — جدای از حسابهای ثبتشده
     const seQ = h('input', { placeholder: 'جستجو بر اساس نام، تلفن یا چهار رقم آخر کد ملی…', style: 'width:100%' }), seBox = h('div');
     let seTimer = null;
     const drawExperts = (rows) => {
       clear(seBox);
       if (!rows.length) return seBox.append(msg('info', 'کارشناسی با این مشخصات یافت نشد.'));
       const allowBy4 = new Map((al.j || []).map(a => [a.nid_last4, a]));
-      seBox.append(h('p', { class: 'mut' }, `${fa(rows.length)} کارشناس از فهرست رسمی سامح (شهرستان پیرانشهر).`),
+      seBox.append(h('p', { class: 'mut' }, `${fa(rows.length)} کارشناس در فهرست واردشده.`),
         h('div', { class: 'scroll' }, h('table', { class: 'tbl' }, h('tr', {}, ['نام', 'تلفن', 'نقش', 'واحد', 'کد ملی', 'وضعیت ثبتنام', ''].map(x => h('th', {}, x))),
           rows.map(x => {
             const a = allowBy4.get(x.nid_last4);
@@ -505,19 +505,19 @@ async function viewUsers() {
             return h('tr', {}, h('td', { class: 'l' }, x.full_name), h('td', { class: 'ltr' }, x.phone || '—'),
               h('td', {}, (S.cat.roleFa || {})[x.role] || x.role), h('td', {}, (S.units.find(u => u.id === x.unit_id) || {}).name || '—'),
               h('td', { class: 'ltr' }, '••••••' + x.nid_last4), h('td', {}, st),
-              h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm sec', on: { click: () => expertDlg(x) } }, 'ویرایش'), h('button', { class: 'b sm red', on: { click: async () => { if (!confirm('این کارشناس از فهرست سامح حذف شود؟')) return; const r = await api('DELETE', '/api/sameh-experts/' + x.id); if (r.s === 200) load(); else toast(r.j.error); } } }, 'حذف'))));
+              h('td', {}, h('div', { class: 'row' }, h('button', { class: 'b sm sec', on: { click: () => expertDlg(x) } }, 'ویرایش'), h('button', { class: 'b sm red', on: { click: async () => { if (!confirm('این کارشناس از فهرست حذف شود؟')) return; const r = await api('DELETE', '/api/imported-experts/' + x.id); if (r.s === 200) load(); else toast(r.j.error); } } }, 'حذف'))));
           }))));
     };
     const loadExperts = async () => {
-      const r = await api('GET', '/api/sameh-experts?q=' + encodeURIComponent(seQ.value.trim()));
-      if (r.s !== 200) return seBox.append(msg('err', r.j.error || 'خطا در خواندن فهرست سامح'));
+      const r = await api('GET', '/api/imported-experts?q=' + encodeURIComponent(seQ.value.trim()));
+      if (r.s !== 200) return seBox.append(msg('err', r.j.error || 'خطا در خواندن فهرست کارشناسان'));
       drawExperts(r.j);
     };
     seQ.addEventListener('input', () => { clearTimeout(seTimer); seTimer = setTimeout(loadExperts, 250); });
-    box.append(h('div', { class: 'card' }, h('h1', {}, 'کارشناسان بهداشت حرفه‌ای سامح — پیرانشهر'),
-      h('p', { class: 'mut' }, 'این افراد از فهرست رسمی سامح وارد سامانه شدهاند و در «فهرست مجاز» با نقش کارشناس بهداشت حرفه‌ای قرار دارند. رمز عبوری برای آنان ذخیره نشده است؛ ورود آنها با کد ملی و تأیید پیامکی (OTP) انجام میشود و پس از تأیید OTP در شکل «درخواستهای در انتظار تأیید» ظاهر میشوند.'),
-      field('جستجو', seQ), h('div', { class: 'row' }, h('button', { class: 'b', on: { click: () => expertDlg(null) } }, '＋ افزودن کارشناس سامح')), seBox));
-    if (sx.s === 200) drawExperts(sx.j); else seBox.append(msg('err', sx.j.error || 'خطا در خواندن فهرست سامح'));
+    box.append(h('div', { class: 'card' }, h('h1', {}, 'کارشناسان واردشده'),
+      h('p', { class: 'mut' }, 'این افراد از فهرست واردشده در سامانه ثبت شده‌اند. رمز عبوری برای آنان ذخیره نشده است؛ ورود با کد ملی و تأیید پیامکی انجام میشود.'),
+      field('جستجو', seQ), h('div', { class: 'row' }, h('button', { class: 'b', on: { click: () => expertDlg(null) } }, '＋ افزودن کارشناس')), seBox));
+    if (sx.s === 200) drawExperts(sx.j); else seBox.append(msg('err', sx.j.error || 'خطا در خواندن فهرست کارشناسان'));
     // فهرست مجاز
     const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10 }), note = h('input', { placeholder: 'نام (اختیاری)' }), role = h('select', {}, (S.cat.roleFa?Object.entries(S.cat.roleFa):[]).map(([k,v])=>h('option',{value:k},v))), uSel = unitSel(S.me.unit_id, () => { }), out = h('div');
     box.append(h('div', { class: 'card' }, h('h1', {}, 'فهرست مجاز (دعوت)'), h('p', { class: 'mut' }, 'ثبت‌نام فقط برای کد ملی‌هایی ممکن است که شما اینجا ثبت کنید. پس از ثبت‌نامِ فرد، باید همین‌جا دسترسی‌اش را تأیید کنید.'),
@@ -549,13 +549,13 @@ async function viewUsers() {
     const f = (v, max = 100) => h('input', { value: x ? (x[v] ?? '') : '', maxLength: max });
     const name = f('full_name'), last4 = f('nid_last4', 4), phone = f('phone', 20), username = f('username', 60), src = f('source_id', 80);
     const role = roleOpts(x ? x.role : 'expert_ohs'), unit = unitSel(x ? x.unit_id : S.me.unit_id, () => { }), out = h('div');
-    const m = modal('کارشناس سامح' + (x ? ' — ویرایش' : ' — جدید'), h('div', {},
+    const m = modal('کارشناس واردشده' + (x ? ' — ویرایش' : ' — جدید'), h('div', {},
       h('form', { on: { submit: async (e) => { e.preventDefault(); clear(out);
         const b = { full_name: name.value, nid_last4: en(last4.value), phone: en(phone.value), username: username.value, source_id: src.value || undefined, role: role.value, unit_id: +unit.value };
-        const r = await api(x ? 'PUT' : 'POST', x ? '/api/sameh-experts/' + x.id : '/api/sameh-experts', b);
+        const r = await api(x ? 'PUT' : 'POST', x ? '/api/imported-experts/' + x.id : '/api/imported-experts', b);
         if (r.s !== 200) return out.append(msg('err', r.j.error || 'خطا'));
         m.remove(); toast('ذخیره شد ✓'); load();
-      } } }, h('div', { class: 'grid2' }, field('نام و نام خانوادگی', name), field('چهار رقم آخر کد ملی', last4), field('تلفن', phone), field('نام کاربری سامح', username), field('شناسه منبع (اختیاری)', src), field('واحد', unit), field('نقش', role)), out, h('button', { class: 'b' }, 'ذخیره'))), true);
+      } } }, h('div', { class: 'grid2' }, field('نام و نام خانوادگی', name), field('چهار رقم آخر کد ملی', last4), field('تلفن', phone), field('نام کاربری', username), field('شناسه منبع (اختیاری)', src), field('واحد', unit), field('نقش', role)), out, h('button', { class: 'b' }, 'ذخیره'))), true);
   }
   function userDlg(u) {
     const nid = h('input', { class: 'ltr', inputMode: 'numeric', maxLength: 10, disabled: !!u, value: u ? '••••••' + u.nid_last4 : '' });
@@ -653,11 +653,11 @@ function catalogManager(host, ct) {
   async function reload() { const r = await api('GET', '/api/catalog/manage'); if (r.s === 200) { Object.assign(ct, r.j); draw(); } else toast(r.j.error || 'خطا'); }
   function draw() {
     clear(ctl);
-    ctl.append(h('h1', {}, 'کاتالوگ و فرمولها'), h('p', { class: 'mut' }, ' اینجا تعریف شاخصها، چیدمان فرم، فرمولهای محاسباتی، جدولهای فایل ۲ و قواعد هشدار قابل ویرایش است. نوشتن «بازنشانی» همه را به حالت رسمی سامح برمیگرداند.'),
+    ctl.append(h('h1', {}, 'کاتالوگ و فرمولها'), h('p', { class: 'mut' }, 'اینجا تعریف شاخصها، چیدمان فرم، فرمولهای محاسباتی، جدولهای فایل ۲ و قواعد هشدار قابل ویرایش است. «بازنشانی» همه را به حالت پیشفرض سامانه برمیگرداند.'),
       h('div', { class: 'pills' }, kinds.map(([k, t]) => h('button', { class: 'pill' + (k === st.k ? ' on' : ''), on: { click: () => { st.k = k; st.off = 0; st.q = ''; draw(); } } }, `${t} (${fa((ct[k] || []).length)})`))));
     const q = h('input', { placeholder: 'جستوجو…', value: st.q, on: { change: () => { st.q = q.value; st.off = 0; draw(); } } });
     ctl.append(h('div', { class: 'row' }, h('div', { class: 'grow' }, q), h('button', { class: 'b', on: { click: () => dlg(null) } }, '＋ ردیف جدید'),
-      h('button', { class: 'b red sm', on: { click: async () => { if (!confirm('همه‌ی تغییرات کاتالوگ حذف و به حالت اولیه سامح برگردد؟')) return; const r = await api('POST', '/api/catalog/reset', {}); if (r.s === 200) { toast('بازنشانی شد'); reload(); } else toast(r.j.error); } } }, 'بازنشانی کاتالوگ')));
+      h('button', { class: 'b red sm', on: { click: async () => { if (!confirm('همه‌ی تغییرات کاتالوگ حذف و به حالت پیشفرض سامانه برگردد؟')) return; const r = await api('POST', '/api/catalog/reset', {}); if (r.s === 200) { toast('بازنشانی شد'); reload(); } else toast(r.j.error); } } }, 'بازنشانی کاتالوگ')));
     const all = arr(), qq = st.q.trim(), filtered = qq ? all.filter(x => titleOf(x, all.indexOf(x)).includes(qq) || JSON.stringify(x).includes(qq)) : all;
     const page = filtered.slice(st.off, st.off + 100);
     clear(list);
