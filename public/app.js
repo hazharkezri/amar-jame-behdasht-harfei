@@ -68,10 +68,12 @@ function prepCatalog() {
     else if (it.t === 'sub') { sub = { key: it.key, title: it.title, inds: [] }; b.subs.push(sub); }
     else { if (!sub) { sub = { key: b.blk + '|', title: 'عمومی', inds: [] }; b.subs.push(sub); } sub.inds.push(it.id); SUBOF[it.id] = sub.key; }
   }
-  if (S.cat.tables && S.cat.tables.length) BLOCKS.push({
-    blk: 'TX', title: 'بخش ۸ — جداول تکمیلی (فایل ۲)', tables: true,
-    subs: S.cat.tables.map(t => ({ key: 'TX|' + t.key, title: t.title, inds: [] }))
-  });
+  if (S.cat.tables && S.cat.tables.length) {
+    S.cat.tables.forEach((t, i) => BLOCKS.push({
+      blk: 'TX-' + t.key, title: `بخش ۸.${i + 1} — ${t.title}`, tables: true, tableKey: t.key,
+      subs: [{ key: 'TX|' + t.key, title: t.title, inds: [] }]
+    }));
+  }
 }
 function warnings(V) {
   const v = (id) => Number(V[id]) || 0, out = [];
@@ -258,14 +260,14 @@ async function viewEntry() {
       h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => download(`/api/export.xlsx?period=${S.per}&unit=${st.unit}`, 'آمار.xlsx') } }, 'خروجی اکسل'), locked ? null : h('button', { class: 'b sec sm', on: { click: () => importDlg(st.unit) } }, 'درون‌ریزی از اکسل'),
         locked ? null : h('button', { class: 'b', on: { click: submitDlg } }, 'ارسال برای تأیید'))));
   };
-  const drawPills = () => { clear(pills); for (const b of BLOCKS) { const p = prog(b); if (!b.tables && !visibleInds(b).length && b.subs.every(s => st.hidden.has(s.key))) continue; pills.append(h('button', { class: 'pill' + (b.blk === st.blk ? ' on' : ''), on: { click: () => { st.blk = b.blk; sessionStorageSet('blk', b.blk); drawPills(); drawBody(); } } }, b.title.replace(/^بخش\s*\S+\s*—\s*/, ''), h('span', { class: 'pr' }, b.tables ? fa(S.cat.tables.length) + ' جدول' : fa(p) + '٪ تکمیل'))); } };
+  const drawPills = () => { clear(pills); for (const b of BLOCKS) { const p = prog(b); if (!b.tables && !visibleInds(b).length && b.subs.every(s => st.hidden.has(s.key))) continue; pills.append(h('button', { class: 'pill' + (b.blk === st.blk ? ' on' : ''), on: { click: () => { st.blk = b.blk; sessionStorageSet('blk', b.blk); drawPills(); drawBody(); } } }, b.title.replace(/^بخش\s*\S+\s*—\s*/, ''), h('span', { class: 'pr' }, b.tables ? 'جدول تکمیلی' : fa(p) + '٪ تکمیل'))); } };
   const rowEls = {};
   const drawBody = () => {
     clear(body); const b = BLOCKS.find(x => x.blk === st.blk); body.append(h('h2', {}, b.title));
     if (b.tables) {
-      body.append(h('div', { class: 'msg info' }, 'جداول تکمیلی فایل ۲، دادههای پایهای واحد هستند و برخلاف شاخصها به دورهی آماری وابسته نیستند. ویرایش و ذخیره آنها بلافاصله اعمال میشود و در گزارش حسابرسی ثبت میگردد.'));
+      body.append(h('div', { class: 'msg info' }, 'این جدول تکمیلی فایل ۲، دادهی پایهی واحد است و برخلاف شاخصها به دورهی آماری وابسته نیست. ویرایش و ذخیره بلافاصله اعمال میشود و در گزارش حسابرسی ثبت میگردد.'));
       const wrap = h('div'); body.append(wrap);
-      recordEditor({ t: sessionStorageGet('rectab') || S.cat.tables[0].key, unit: st.unit, q: '', off: 0, storeKey: 'rectab', title: 'جداول تکمیلی فایل ۲' }, wrap);
+      recordEditor({ t: b.tableKey || (S.cat.tables[0] || {}).key, unit: st.unit, q: '', off: 0, single: true }, wrap);
       return;
     }
     let first = true;
@@ -349,14 +351,17 @@ function recordEditor(st, host) {
   const T = () => S.cat.tables.find(x => x.key === st.t);
   const draw = () => {
     clear(ctl);
-    const quick = h('div', { class: 'pills' }, S.cat.tables.map(t => h('button', {
+    const quick = st.single ? null : h('div', { class: 'pills' }, S.cat.tables.map(t => h('button', {
       class: 'pill' + (t.key === st.t ? ' on' : ''), title: t.title,
       on: { click: () => { st.t = t.key; st.off = 0; sessionStorageSet(storeKey, st.t); draw(); load(); } }
     }, t.title)));
     const q = h('input', { placeholder: 'جست وجو در ردیفها…', value: st.q, on: { change: () => { st.q = q.value; st.off = 0; load(); } } });
-    ctl.append(h('h1', {}, st.title || 'جدولها و فهرستها'), quick,
-      h('div', { class: 'grid2' }, mgr ? field('واحد (شامل زیرمجموعه)', unitSel(st.unit, (v) => { st.unit = v; st.off = 0; load(); })) : field('واحد', h('div', {}, (S.units.find(u => u.id === st.unit) || {}).name || '—')), field('جستجو', q)),
+    const unitField = mgr ? field('واحد (شامل زیرمجموعه)', cascadeSel(st.unit, (v) => { st.unit = v; st.off = 0; load(); })) : field('واحد', h('div', {}, (S.units.find(u => u.id === st.unit) || {}).name || '—'));
+    const kids = [h('h1', {}, st.single ? (T() ? T().title : 'جدول تکمیلی') : (st.title || 'جدولها و فهرستها'))];
+    if (quick) kids.push(quick);
+    kids.push(h('div', { class: 'grid2' }, unitField, field('جستجو', q)),
       h('div', { class: 'row' }, h('button', { class: 'b', on: { click: () => recDlg(null) } }, '＋ ردیف جدید'), h('button', { class: 'b sec', on: { click: () => download(`/api/records.xlsx?table=${st.t}&unit=${st.unit}`, 'جدول.xlsx') } }, 'خروجی اکسل')));
+    ctl.append(...kids);
   };
   async function load() {
     const r = await api('GET', `/api/records?table=${st.t}&unit=${st.unit}&q=${encodeURIComponent(st.q)}&offset=${st.off}`); clear(list);
@@ -434,7 +439,7 @@ async function viewReport() {
     if (r.s !== 200) return box.append(msg('err', r.j.error));
     const d = r.j, ST = S.cat.statusFa, ctl = h('div', { class: 'card' });
     const q = h('input', { placeholder: 'جست‌وجو در عنوان…', value: st.q, on: { input: () => { st.q = q.value; drawT(); } } });
-    ctl.append(h('h1', {}, 'گزارش و جمع زیرمجموعه‌ها'), h('div', { class: 'grid2' }, field('واحد', unitSel(st.unit, (v) => { st.unit = v; load(); })), field('دوره', periodSel(load)), field('نمایش', h('select', { on: { change: (e) => { st.mode = e.target.value; drawT(); } } }, h('option', { value: 'ind', selected: st.mode === 'ind' }, 'جمع شاخص‌ها'), h('option', { value: 'rep', selected: st.mode === 'rep' }, 'گزارش محاسباتی و درصدی'))), field('جست‌وجو', q)),
+    ctl.append(h('h1', {}, 'گزارش و جمع زیرمجموعه‌ها'), h('div', { class: 'grid2' }, field('واحد', cascadeSel(st.unit, (v) => { st.unit = v; load(); })), field('دوره', periodSel(load)), field('نمایش', h('select', { on: { change: (e) => { st.mode = e.target.value; drawT(); } } }, h('option', { value: 'ind', selected: st.mode === 'ind' }, 'جمع شاخص‌ها'), h('option', { value: 'rep', selected: st.mode === 'rep' }, 'گزارش محاسباتی و درصدی'))), field('جست‌وجو', q)),
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: st.only, on: { change: (e) => { st.only = e.target.checked; load(); } } }), 'فقط واحدهای تأییدشده'), h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: st.hide, on: { change: (e) => { st.hide = e.target.checked; drawT(); } } }), 'پنهان کردن ردیف‌های خالی'),
       h('div', { class: 'row' }, h('button', { class: 'b', on: { click: () => download(`/api/export.xlsx?period=${S.per}&unit=${st.unit}`, 'گزارش.xlsx') } }, 'خروجی اکسل (همه‌ی شیت‌ها)'), h('button', { class: 'b sec', on: { click: () => importDlg(st.unit) } }, 'درون‌ریزی از اکسل')));
     const tb = h('div', { class: 'card' }); box.append(ctl, tb);
