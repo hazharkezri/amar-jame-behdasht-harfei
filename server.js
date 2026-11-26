@@ -382,20 +382,23 @@ R('POST', '/api/password', (c) => {
 // --- واحدها
 R('GET', '/api/units', (c) => { const ids = scopeOf(c.u); send(c.res, 200, db.prepare(`SELECT id,parent_id,type,name FROM units WHERE id IN (${inList(ids)}) ORDER BY id`).all(...ids)); });
 R('POST', '/api/units', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const parent = unitOf(+c.b.parent_id), name = str(c.b.name, 100);
-  if (!parent || !name || !canManage(c.u, parent.id, 'expert')) return fail(c.res, 403, 'اجازه یا اطلاعات نامعتبر.');
+  if (!parent || !name) return fail(c.res, 400, 'اطلاعات نامعتبر.');
   const t = NEXT[parent.type]; if (!t) return fail(c.res, 400, 'زیر مرکز خدمات جامع واحد دیگری تعریف نمی‌شود.');
   try { const r = db.prepare('INSERT INTO units(parent_id,type,name) VALUES(?,?,?)').run(parent.id, t, name); audit(c.u.id, 'unit_add', { name, parent: parent.id }, c.ip); send(c.res, 200, { id: +r.lastInsertRowid }); }
   catch (e) { fail(c.res, 400, 'نام تکراری است.'); }
 });
 R('POST', '/api/units/:id/rename', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const u = unitOf(+c.p.id), name = str(c.b.name, 100);
-  if (!u || !name || !canManage(c.u, u.id, 'expert') || (+u.id === c.u.unit_id && !isRoot(u))) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!u || !name || isRoot(u)) return fail(c.res, 400, 'اطلاعات نامعتبر یا واحد ریشه.');
   try { db.prepare('UPDATE units SET name=? WHERE id=?').run(name, u.id); audit(c.u.id, 'unit_rename', { id: u.id, name }, c.ip); send(c.res, 200, { ok: true }); } catch (e) { fail(c.res, 400, 'نام تکراری است.'); }
 });
 R('DELETE', '/api/units/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const u = unitOf(+c.p.id);
-  if (!u || isRoot(u) || !canManage(c.u, u.id, 'expert') || (+u.id === c.u.unit_id && !isRoot(u))) return fail(c.res, 403, 'اجازه ندارید یا واحد ریشه قابل حذف نیست.');
+  if (!u || isRoot(u)) return fail(c.res, 403, 'واحد ریشه قابل حذف نیست.');
   // cascade: delete all descendants; people and invitations move to the parent so no FK breaks
   const ids = subtreeIds(u.id), ph = inList(ids), parent = u.parent_id;
   tx(() => {
@@ -411,11 +414,11 @@ R('DELETE', '/api/units/:id', (c) => {
 
 // --- فهرست مجاز، کاربران، بارگذاری گروهی
 R('GET', '/api/allow', (c) => {
-  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی به این بخش دسترسی دارد.');
   const ids = scopeOf(c.u); send(c.res, 200, db.prepare(`SELECT id,nid_last4,unit_id,role,note,used FROM allow WHERE unit_id IN (${inList(ids)}) ORDER BY id DESC`).all(...ids));
 });
 R('GET', '/api/imported-experts', (c) => {
-  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی به این بخش دسترسی دارد.');
   const ids = scopeOf(c.u), q = str(c.q.q, 60).replace(/[%_]/g, '');
   const where = `unit_id IN (${inList(ids)})` + (q ? ' AND (full_name LIKE ? OR phone LIKE ? OR username LIKE ? OR nid_last4 LIKE ?)' : '');
   const args = [...ids, ...(q ? Array(4).fill('%' + q + '%') : [])];
@@ -432,9 +435,8 @@ function importedExpertFields(b, fallback = {}) {
   return { full_name, unit_id, role, nid_last4: /^\d{1,4}$/.test(last4) ? last4.padStart(4, '0') : '', phone: str(b.phone, 20), username: str(b.username, 60), source_id: str(b.source_id, 80) || String(fallback.source_id || 'manual-' + now()) };
 }
 R('POST', '/api/imported-experts', (c) => {
-  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const f = importedExpertFields(c.b); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
-  if (!canManage(c.u, f.unit_id, f.role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
   try {
     const r = db.prepare('INSERT INTO imported_experts(source_id,full_name,nid_last4,phone,username,role,unit_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
       .run(f.source_id, f.full_name, f.nid_last4, f.phone, f.username, f.role, f.unit_id, str(c.b.source, 40) || 'manual', now());
@@ -442,10 +444,10 @@ R('POST', '/api/imported-experts', (c) => {
   } catch (e) { fail(c.res, 400, 'شناسه منبع تکراری است.'); }
 });
 R('PUT', '/api/imported-experts/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const old = db.prepare('SELECT * FROM imported_experts WHERE id=?').get(+c.p.id);
-  if (!old || !canManage(c.u, old.unit_id, old.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!old) return fail(c.res, 404, 'یافت نشد.');
   const f = importedExpertFields(c.b, old); if (!f) return fail(c.res, 400, 'نام و واحد الزامی است.');
-  if (!canManage(c.u, f.unit_id, f.role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
   try {
     db.prepare('UPDATE imported_experts SET source_id=?,full_name=?,nid_last4=?,phone=?,username=?,role=?,unit_id=? WHERE id=?')
       .run(f.source_id, f.full_name, f.nid_last4, f.phone, f.username, f.role, f.unit_id, old.id);
@@ -453,27 +455,29 @@ R('PUT', '/api/imported-experts/:id', (c) => {
   } catch (e) { fail(c.res, 400, 'شناسه منبع تکراری است.'); }
 });
 R('DELETE', '/api/imported-experts/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const x = db.prepare('SELECT * FROM imported_experts WHERE id=?').get(+c.p.id);
-  if (!x || !canManage(c.u, x.unit_id, x.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!x) return fail(c.res, 404, 'یافت نشد.');
   db.prepare('DELETE FROM imported_experts WHERE id=?').run(x.id);
   audit(c.u.id, 'imported_expert_del', { id: x.id }, c.ip); send(c.res, 200, { ok: true });
 });
 function addAllow(actor, nidRaw, unit, role, note) {
   const nid = L.validNid(nidRaw); if (!nid) return 'کد ملی معتبر نیست';
-  if (!canManage(actor, unit, role)) return 'اجازه‌ی ثبت برای این واحد/نقش را ندارید';
+  if (!isRootMgr(actor)) return 'فقط مدیر اصلی اجازه این عملیات را دارد';
   try { db.prepare('INSERT INTO allow(nid_hash,nid_enc,nid_last4,unit_id,role,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)').run(L.hmac(nid), L.enc(nid), nid.slice(-4), unit, role, str(note, 100), actor.id, now()); return null; }
   catch (e) { return 'این کد ملی قبلاً در فهرست مجاز ثبت شده است'; }
 }
 R('POST', '/api/allow', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const role = ROLES.includes(c.b.role) ? c.b.role : 'expert_ohs';
   const err = addAllow(c.u, c.b.nid, +c.b.unit_id, role, c.b.note);
   if (err) return fail(c.res, 400, err); audit(c.u.id, 'allow_add', { unit: +c.b.unit_id, role }, c.ip); send(c.res, 200, { ok: true });
 });
 R('PUT', '/api/allow/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const a = db.prepare('SELECT * FROM allow WHERE id=?').get(+c.p.id);
-  if (!a || !canManage(c.u, a.unit_id, a.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!a) return fail(c.res, 404, 'یافت نشد.');
   const unit = +c.b.unit_id || a.unit_id, role = ROLES.includes(c.b.role) ? c.b.role : a.role;
-  if (!canManage(c.u, unit, role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
   if (a.used && (unit !== a.unit_id || role !== a.role)) return fail(c.res, 400, 'کد ملی ثبت‌نام کرده است؛ واحد و نقش آن قابل تغییر نیست.');
   const note = str(c.b.note, 100);
   db.prepare('UPDATE allow SET unit_id=?,role=?,note=? WHERE id=?').run(unit, role, note, a.id);
@@ -489,7 +493,7 @@ function parseTable(b) {
   return s.rows.filter(Boolean).map(r => Array.from(r, v => v == null ? '' : String(v)));
 }
 R('POST', '/api/allow/bulk', (c) => {
-  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   let rows; try { rows = parseTable(c.b); } catch (e) { return fail(c.res, 400, e.message || 'فایل قابل خواندن نیست.'); }
   if (rows.length && !L.validNid(rows[0][0]) && /کد|ملی|نام|واحد/.test(rows[0].join(' '))) rows.shift();       // سطر عنوان
   if (rows.length > 5000) return fail(c.res, 400, 'حداکثر ۵۰۰۰ ردیف در هر بار.');
@@ -522,29 +526,30 @@ else if (/حرفه/i.test(t)) role = 'expert_ohs';
   audit(c.u.id, 'allow_bulk', { added, errors: errors.length }, c.ip); send(c.res, 200, { added, errors });
 }, { big: true });
 R('GET', '/api/allow/template.xlsx', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const ids = scopeOf(c.u), units = db.prepare(`SELECT name,type FROM units WHERE id IN (${inList(ids)}) ORDER BY id`).all(...ids);
   file(c.res, 'قالب-کدملی-کارشناسان.xlsx', X.build([
     { name: 'فهرست مجاز', header: 1, widths: [16, 28, 26, 14], rows: [['کد ملی', 'نام و نام خانوادگی', 'واحد (دقیقاً مطابق شیت «واحدها»)', 'نقش (کارشناس / مسئول)'], ['', '', units[1] ? units[1].name : '', 'کارشناس']] },
     { name: 'واحدها', header: 1, widths: [34, 24], rows: [['نام واحد', 'نوع'], ...units.map(u => [u.name, TYPE_FA[u.type]])] }]), XLSX_T);
 });
 R('DELETE', '/api/allow/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const a = db.prepare('SELECT * FROM allow WHERE id=? AND used=0').get(+c.p.id);
-  if (!a || !canManage(c.u, a.unit_id, a.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!a) return fail(c.res, 403, 'اجازه ندارید یا این کد ملی قبلاً ثبت‌نام کرده است.');
   db.prepare('DELETE FROM allow WHERE id=?').run(a.id); audit(c.u.id, 'allow_del', { id: a.id }, c.ip); send(c.res, 200, { ok: true });
 });
 R('GET', '/api/users', (c) => {
-  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی به این بخش دسترسی دارد.');
   const ids = scopeOf(c.u);
-  const rows = db.prepare(`SELECT * FROM users WHERE unit_id IN (${inList(ids)}) ORDER BY status,id DESC`).all(...ids).filter(u => u.id !== c.u.id && canManage(c.u, u.unit_id, u.role));
+  const rows = db.prepare(`SELECT * FROM users WHERE unit_id IN (${inList(ids)}) ORDER BY status,id DESC`).all(...ids).filter(u => u.id !== c.u.id);
   send(c.res, 200, rows.map(u => ({ ...publicUser(u), email: u.email, phone: u.phone, totp_ok: !!u.totp_ok, last_login: u.last_login, nid: u.status === 'pending' ? L.dec(u.nid_enc) : undefined, unit_name: unitOf(u.unit_id).name })));
 });
 const userEmailOk = (email) => { const dom = String(email || '').split('@')[1]; return !!dom && DOMAINS.some(d => dom === d || dom.endsWith('.' + d)); };
 R('POST', '/api/users', (c) => {
-  if (!isManagerRole(c.u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const nid = L.validNid(c.b.nid), name = str(c.b.full_name, 100), email = str(c.b.email, 120).toLowerCase(), phone = str(c.b.phone, 20), pw = String(c.b.password || '');
   const unit = +c.b.unit_id, role = ROLES.includes(c.b.role) ? c.b.role : 'expert_ohs', status = ['pending', 'active', 'rejected', 'suspended'].includes(c.b.status) ? c.b.status : 'pending';
   if (!nid || !name || !userEmailOk(email) || !strongPw(pw)) return fail(c.res, 400, 'کد ملی معتبر، نام، ایمیل سازمانی و رمز حداقل ۱۲ کاراکتر شامل حرف و عدد الزامی است.');
-  if (!canManage(c.u, unit, role)) return fail(c.res, 403, 'اجازه یا نقش نامعتبر است.');
   if (db.prepare('SELECT 1 FROM users WHERE nid_hash=?').get(L.hmac(nid))) return fail(c.res, 400, 'کاربری با این کد ملی وجود دارد.');
   const secret = L.newTotpSecret(); let id;
   tx(() => {
@@ -556,12 +561,13 @@ R('POST', '/api/users', (c) => {
   audit(c.u.id, 'user_add', { id, unit, role, status }, c.ip); send(c.res, 200, { id, totp_secret: secret, otpauth: `otpauth://totp/AmarSalamat:${nid.slice(-4)}?secret=${secret}&issuer=AmarSalamat` });
 });
 R('PUT', '/api/users/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id);
-  if (!u || !canManage(c.u, u.unit_id, u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!u) return fail(c.res, 404, 'یافت نشد.');
   const self = u.id === c.u.id;
   const unit = +c.b.unit_id || u.unit_id, role = ROLES.includes(c.b.role) ? c.b.role : u.role;
   const name = str(c.b.full_name, 100) || u.full_name, email = str(c.b.email, 120).toLowerCase() || u.email, phone = str(c.b.phone, 20);
-  if (!canManage(c.u, unit, role) || (self && (unit !== u.unit_id || role !== u.role))) return fail(c.res, 403, 'نقش یا واحد نامعتبر است.');
+  if (self && (unit !== u.unit_id || role !== u.role)) return fail(c.res, 403, 'نقش یا واحد خودتان را تغییر ندهید.');
   if (!userEmailOk(email)) return fail(c.res, 400, 'ایمیل باید سازمانی (ac.ir / gov.ir) باشد.');
   const status = c.b.status === undefined ? u.status : c.b.status;
   if (!['pending', 'active', 'rejected', 'suspended'].includes(status)) return fail(c.res, 400, 'وضعیت نامعتبر.');
@@ -579,8 +585,9 @@ R('PUT', '/api/users/:id', (c) => {
   send(c.res, 200, { ok: true, ...(secret ? { totp_secret: secret, otpauth: `otpauth://totp/AmarSalamat:${u.nid_last4}?secret=${secret}&issuer=AmarSalamat` } : {}) });
 });
 R('DELETE', '/api/users/:id', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id);
-  if (!u || u.id === c.u.id || !canManage(c.u, u.unit_id, u.role)) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!u || u.id === c.u.id) return fail(c.res, 403, 'اجازه ندارید.');
   tx(() => {
     db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
     db.prepare('UPDATE allow SET used=0 WHERE nid_hash=?').run(u.nid_hash);
@@ -589,8 +596,9 @@ R('DELETE', '/api/users/:id', (c) => {
   audit(c.u.id, 'user_del', { id: u.id }, c.ip); send(c.res, 200, { ok: true });
 });
 R('POST', '/api/users/:id/status', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id), st = c.b.status;
-  if (!u || !canManage(c.u, u.unit_id, u.role) || u.id === c.u.id) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!u || u.id === c.u.id) return fail(c.res, 403, 'اجازه ندارید.');
   if (!['active', 'rejected', 'suspended'].includes(st)) return fail(c.res, 400, 'وضعیت نامعتبر.');
   if (st === 'active' && !u.totp_ok) return fail(c.res, 400, 'کاربر هنوز برنامه‌ی احراز هویت را تأیید نکرده است.');
   db.prepare('UPDATE users SET status=?, approved_by=? WHERE id=?').run(st, c.u.id, u.id);
@@ -598,8 +606,9 @@ R('POST', '/api/users/:id/status', (c) => {
   audit(c.u.id, 'user_' + st, { user: u.id }, c.ip); send(c.res, 200, { ok: true });
 });
 R('POST', '/api/users/:id/reset', (c) => {
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیر اصلی اجازه این عملیات را دارد.');
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(+c.p.id);
-  if (!u || !canManage(c.u, u.unit_id, u.role) || u.id === c.u.id) return fail(c.res, 403, 'اجازه ندارید.');
+  if (!u || u.id === c.u.id) return fail(c.res, 403, 'اجازه ندارید.');
   tx(() => {
     db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
     db.prepare('INSERT INTO allow(nid_hash,nid_enc,nid_last4,unit_id,role,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(nid_hash) DO UPDATE SET used=0,unit_id=excluded.unit_id,role=excluded.role')
@@ -779,7 +788,7 @@ R('GET', '/api/inbox', (c) => {
         o.pendingApprovals = rows.filter(r => canDecideStage(c.u, r.unit_id, r.status)).length;
       }
     }
-    const ids = scopeOf(c.u); o.pendingUsers = db.prepare(`SELECT COUNT(*) n FROM users WHERE status='pending' AND totp_ok=1 AND unit_id IN (${inList(ids)})`).get(...ids).n;
+    if (isRootMgr(c.u)) { const ids = scopeOf(c.u); o.pendingUsers = db.prepare(`SELECT COUNT(*) n FROM users WHERE status='pending' AND totp_ok=1 AND unit_id IN (${inList(ids)})`).get(...ids).n; }
   }
   send(c.res, 200, o);
 });

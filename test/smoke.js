@@ -94,6 +94,15 @@ async function login(cl, nid, pw, secret, d) { const r = await cl.call('POST', '
   r = await root.call('GET', `/api/approvals?period=${per}`); const mah = r.j.find(x => x.name === 'مهاباد'); assert.equal(mah.status, 'submitted'); assert(mah.warnings >= 0);
   assert.equal((await root.call('GET', '/api/inbox')).j.pendingApprovals, 1);
   const mgr = client(); await login(mgr, N.mgr, 'Abcdefghij12', reg.mgr.secret, 1);
+  assert.equal((await mgr.call('GET', '/api/users')).s, 403, 'mgr cannot list users');
+  assert.equal((await mgr.call('POST', '/api/users', { nid: '0012345670', full_name: 'x', email: 'x@umsu.ac.ir', phone: '09120000000', unit_id: county('مهاباد').id, role: 'expert_ohs', password: 'Abcdefghij12' })).s, 403, 'mgr cannot add user');
+  assert.equal((await mgr.call('GET', '/api/allow')).s, 403, 'mgr cannot list allow');
+  assert.equal((await mgr.call('POST', '/api/allow', { nid: '0012345670', unit_id: county('مهاباد').id, role: 'expert_ohs' })).s, 403, 'mgr cannot add allow');
+  assert.equal((await mgr.call('POST', '/api/allow/bulk', { csv: '0012345670,تست,مهاباد,کارشناس' })).s, 403, 'mgr cannot bulk allow');
+  assert.equal((await mgr.call('GET', '/api/allow/template.xlsx')).s, 403, 'mgr cannot get allow template');
+  assert.equal((await mgr.call('GET', '/api/imported-experts')).s, 403, 'mgr cannot list imported experts');
+  assert.equal((await mgr.call('POST', '/api/imported-experts', { full_name: 'x', unit_id: county('مهاباد').id, role: 'expert_ohs' })).s, 403, 'mgr cannot add imported expert');
+  assert.equal((await mgr.call('POST', '/api/units', { parent_id: county('مهاباد').id, name: 'تست' })).s, 403, 'mgr cannot add unit');
   r = await mgr.call('POST', '/api/approvals/decide', { period: per, unit: county('مهاباد').id, action: 'approve' }); assert.equal(r.s, 403, 'manager cannot approve own unit');
   r = await root.call('POST', '/api/approvals/decide', { period: per, unit: county('مهاباد').id, action: 'return' }); assert.equal(r.s, 400, 'note required');
   r = await root.call('POST', '/api/approvals/decide', { period: per, unit: county('مهاباد').id, action: 'return', note: 'عدد کارگاه‌های بازرسی‌شده را بررسی کنید' }); assert.equal(r.s, 200);

@@ -146,7 +146,7 @@ function regForm(box) {
 // ---------- قالب اصلی
 const TABS = () => {
   const mgr = isMgrRole(S.me.role), root = mgr && !S.me.unit.parent_id;
-  return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['analytics', 'تحلیل و شاخص‌ها', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', mgr, S.inbox.pendingUsers], ['admin', 'مدیریت ستاد', root]].filter(t => t[2]);
+  return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['analytics', 'تحلیل و شاخص‌ها', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', root, S.inbox.pendingUsers], ['admin', 'مدیریت ستاد', root]].filter(t => t[2]);
 };
 const TAB_ICONS = { entry: '✎', records: '☰', dash: '📊', report: '📈', analytics: '📉', appr: '✓', users: '👥', admin: '⚙' };
 let $view;
