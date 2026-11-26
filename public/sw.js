@@ -1,6 +1,6 @@
 'use strict';
 // فقط پوسته‌ی برنامه کش می‌شود؛ هیچ پاسخ API (داده‌ی کاربر) هرگز کش نمی‌شود.
-const V = 'amar-v13', SHELL = ['/', '/app.css?v=17', '/app.js?v=37', '/icon.svg', '/manifest.webmanifest', '/fonts/Vazirmatn-Regular.ttf', '/fonts/Vazirmatn-Bold.ttf'];
+const V = 'amar-v14', SHELL = ['/', '/app.css?v=18', '/app.js?v=38', '/icon.svg', '/manifest.webmanifest', '/fonts/Vazirmatn-Regular.ttf', '/fonts/Vazirmatn-Bold.ttf'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
