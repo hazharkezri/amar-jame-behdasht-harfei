@@ -146,7 +146,7 @@ function regForm(box) {
 // ---------- قالب اصلی
 const TABS = () => {
   const mgr = isMgrRole(S.me.role), root = mgr && !S.me.unit.parent_id;
-  return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['analytics', 'تحلیل و شاخص‌ها', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', root, S.inbox.pendingUsers], ['admin', 'ادمین سامانه', root]].filter(t => t[2]);
+  return [['entry', 'ورود آمار', true], ['records', 'جدول‌ها و فهرست‌ها', true], ['dash', 'داشبورد', mgr], ['report', 'گزارش و جمع', mgr], ['analytics', 'تحلیل و شاخص‌ها', mgr], ['appr', 'تأیید ارسال‌ها', mgr, S.inbox.pendingApprovals], ['users', 'کاربران و دسترسی', root, S.inbox.pendingUsers], ['admin', 'مدیریت ستاد', root]].filter(t => t[2]);
 };
 const TAB_ICONS = { entry: '✎', records: '☰', dash: '📊', report: '📈', analytics: '📉', appr: '✓', users: '👥', admin: '⚙' };
 let $view;
@@ -258,8 +258,8 @@ async function viewEntry() {
       s === 'county_approved' ? msg('ok', 'آمار در سطح شهرستان تأیید شده و منتظر تأیید نهایی دانشگاه است.') : null,
       (!locked ? (() => { const miss = reqBlocks().filter(k => !st.conf[k]).length; const ws = warnings(Object.fromEntries(Object.entries(st.V).map(([k, v]) => [k, Number(en(v)) || 0]))).length; if (!miss && !ws) return msg('ok', 'همه بخش‌ها تأیید شده‌اند و خطای منطقی فعالی دیده نشد.'); return msg(miss || ws ? 'warn' : 'ok', `وضعیت ارسال: ${fa(reqBlocks().length - miss)} از ${fa(reqBlocks().length)} بخش تأیید شده، ${fa(ws)} خطای منطقی.`); })() : null),
       per.status !== 'open' ? (S.periods.length
-        ? msg('warn', (per.label ? `دوره‌ی «${per.label}» بسته است.` : 'این دوره بسته است.') + (isMgrRole(S.me.role) ? ' برای ورود آمار، از بخش «ادمین سامانه» آن را باز کنید.' : ' برای ورود آمار باید دوره باز شود.'))
-        : msg('warn', 'هنوز هیچ دوره‌ی آماری تعریف نشده است؛ به همین دلیل ورود آمار غیرفعال است.' + (isMgrRole(S.me.role) ? ' از بخش «ادمین سامانه» یک دوره بسازید.' : ''))) : null,
+        ? msg('warn', (per.label ? `دوره‌ی «${per.label}» بسته است.` : 'این دوره بسته است.') + (isMgrRole(S.me.role) ? ' برای ورود آمار، از بخش «مدیریت ستاد» آن را باز کنید.' : ' برای ورود آمار باید دوره باز شود.'))
+        : msg('warn', 'هنوز هیچ دوره‌ی آماری تعریف نشده است؛ به همین دلیل ورود آمار غیرفعال است.' + (isMgrRole(S.me.role) ? ' از بخش «مدیریت ستاد» یک دوره بسازید.' : ''))) : null,
       h('div', { class: 'row' }, h('button', { class: 'b sec sm', on: { click: () => download(`/api/export.xlsx?period=${S.per}&unit=${st.unit}`, 'آمار.xlsx') } }, 'خروجی اکسل'), locked ? null : h('button', { class: 'b sec sm', on: { click: () => importDlg(st.unit) } }, 'درون‌ریزی از اکسل'),
         locked ? null : h('button', { class: 'b' + (allConfirmed() ? '' : ' sec'), on: { click: submitDlg }, title: allConfirmed() ? 'ارسال برای تأیید' : 'ابتدا همه بخش‌ها را تیک تأیید کنید' }, allConfirmed() ? 'ارسال برای تأیید' : `ارسال (${fa(reqBlocks().filter(k => st.conf[k]).length)}/${fa(reqBlocks().length)} بخش تأیید)`))));
   };
@@ -630,7 +630,7 @@ async function viewAnalytics() {
     const strongUnits = rows.filter(x => x.v !== null && x.v >= 80);
     if (strongUnits.length) box.append(h('div', { class: 'card' }, h('h2', {}, 'نقاط قوت'), h('ul', {}, strongUnits.map(x => h('li', {}, x.name + ' — ' + kt[st.kpi] + ': ' + fa(x.v) + '٪. الگو برای سایر واحدها.')))));
     // Verification section
-    box.append(h('div', { class: 'card' }, h('h2', {}, 'راستی‌آزمایی (Audit)'), h('p', { class: 'mut' }, 'برای بررسی یکپارچگی داده‌ها، از بخش «ادمین سامانه» ← «ممیزی» استفاده کنید. هشدارهای منطقی در صفحه‌ی «تأیید ارسال‌ها» قابل مشاهده است.')));
+    box.append(h('div', { class: 'card' }, h('h2', {}, 'راستی‌آزمایی (Audit)'), h('p', { class: 'mut' }, 'برای بررسی یکپارچگی داده‌ها، از بخش «مدیریت ستاد» ← «ممیزی» استفاده کنید. هشدارهای منطقی در صفحه‌ی «تأیید ارسال‌ها» قابل مشاهده است.')));
     // Inspector ranking
     const insp = await api('GET', `/api/inspector-stats?period=${S.per}`);
     if (insp.s === 200 && insp.j.length) {
@@ -721,7 +721,7 @@ function catalogManager(host, ct) {
   draw();
 }
 
-// ================= ادمین سامانه =================
+// ================= مدیریت ستاد =================
 async function viewAdmin() {
   const box = h('div'); $view.append(box);
   async function load() {
