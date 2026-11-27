@@ -11,7 +11,7 @@ if (!db.prepare('SELECT 1 FROM units LIMIT 1').get()) {
   const pw = crypto.randomBytes(12).toString('base64url') + 'a1';
   const secret = L.newTotpSecret();
   db.prepare("INSERT INTO users(nid_hash,nid_enc,nid_last4,full_name,email,unit_id,role,pw_hash,totp_enc,totp_ok,status,created_at) VALUES(?,?,?,?,?,?,'manager_ohs',?,?,1,'active',?)")
-    .run(L.hmac(nid), L.enc(nid), nid.slice(-4), 'ادمین سامانه', 'admin@amar.local', rootId, L.hashPw(pw), L.enc(secret), Date.now());
+    .run(L.hmac(nid), L.enc(nid), nid.slice(-4), 'مدیریت ستاد', 'admin@amar.local', rootId, L.hashPw(pw), L.enc(secret), Date.now());
   audit(null, 'bootstrap_root', { last4: nid.slice(-4) }, 'bootstrap');
 
   // دانشگاهها و شهرستانها

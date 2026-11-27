@@ -621,7 +621,7 @@ R('POST', '/api/users/:id/reset', (c) => {
 // --- دوره‌ها
 R('GET', '/api/periods', (c) => send(c.res, 200, db.prepare('SELECT * FROM periods ORDER BY id DESC').all()));
 R('POST', '/api/periods', (c) => {
-  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط ادمین سامانه دوره تعریف می‌کند.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیریت ستاد دوره تعریف می‌کند.');
   const label = str(c.b.label, 60); if (!label) return fail(c.res, 400, 'عنوان دوره را وارد کنید.');
   try { db.prepare('INSERT INTO periods(label) VALUES(?)').run(label); audit(c.u.id, 'period_add', { label }, c.ip); send(c.res, 200, { ok: true }); } catch (e) { fail(c.res, 400, 'دوره تکراری است.'); }
 });
@@ -679,7 +679,7 @@ R('GET', '/api/profile', (c) => {
 });
 R('GET', '/api/profile/all', (c) => { if (!isRootMgr(c.u)) return fail(c.res, 403, 'اجازه ندارید.'); send(c.res, 200, db.prepare('SELECT unit_type,sub_key FROM form_off').all()); });
 R('POST', '/api/profile', (c) => {
-  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط ادمین سامانه اجازه این عملیات را دارد.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیریت ستاد اجازه این عملیات را دارد.');
   const t = c.b.unit_type; if (!['country', 'university', 'county', 'center', 'base', 'house'].includes(t)) return fail(c.res, 400, 'نوع واحد نامعتبر.');
   const valid = new Set(CAT.layout.filter(x => x.t === 'sub').map(x => x.key));
   tx(() => {
@@ -919,7 +919,7 @@ R('GET', '/api/records.xlsx', (c) => {
   file(c.res, `${t.title}.xlsx`, X.build([{ name: t.title.slice(0, 30), header: 2, widths: [22, ...t.cols.map(() => 18)], rows: [grp, head, ...rows.map(r => { const d = JSON.parse(r.data); return [r.name, ...t.cols.map(x => (x.type === 'num' && d[x.k] !== undefined) ? Number(d[x.k]) : d[x.k])]; })], freeze: { row: 2, col: 1 } }]), XLSX_T);
 });
 R('POST', '/api/import/file2', (c) => {
-  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط ادمین سامانه می‌تواند فایل ۲ را درون‌ریزی کند.');
+  if (!isRootMgr(c.u)) return fail(c.res, 403, 'فقط مدیریت ستاد می‌تواند فایل ۲ را درون‌ریزی کند.');
   let r; try { r = importFile2(Buffer.from(String(c.b.data || ''), 'base64'), { root: c.u.unit_id, actor: c.u.id, dry: !!c.b.dry }); } catch (e) { return fail(c.res, 400, e.message || 'فایل قابل خواندن نیست.'); }
   if (!c.b.dry) audit(c.u.id, 'import_file2', { imported: r.total }, c.ip);
   send(c.res, 200, r);

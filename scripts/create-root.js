@@ -14,5 +14,5 @@ const pw = crypto.randomBytes(12).toString('base64url') + 'a1', secret = L.newTo
 db.prepare("INSERT INTO users(nid_hash,nid_enc,nid_last4,full_name,email,unit_id,role,pw_hash,totp_enc,totp_ok,status,created_at) VALUES(?,?,?,?,?,?,'manager_ohs',?,?,1,'active',?)")
   .run(L.hmac(nid), L.enc(nid), nid.slice(-4), name, email.toLowerCase(), c.id, L.hashPw(pw), L.enc(secret), Date.now());
 audit(null, 'root_created', { last4: nid.slice(-4) }, 'cli');
-console.log('\nادمین سامانه ساخته شد.\nرمز موقت (بلافاصله تغییر دهید):', pw, '\nکلید احراز هویت (در Google Authenticator/برنامه‌ی مشابه وارد کنید):', secret,
+console.log('\nحساب مدیریت ستاد ساخته شد.\nرمز موقت (بلافاصله تغییر دهید):', pw, '\nکلید احراز هویت (در Google Authenticator/برنامه‌ی مشابه وارد کنید):', secret,
   '\notpauth://totp/AmarSalamat:' + nid.slice(-4) + '?secret=' + secret + '&issuer=AmarSalamat\n');

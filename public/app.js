@@ -84,7 +84,7 @@ const warnText = (w) => `«${IND[w.a].title}» (${fmt(w.got)}) از جمع «${w
 
 // ---------- شروع
 async function boot() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=17', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=18', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
   const c = await api('GET', '/api/catalog'); if (c.s !== 200) { $app.textContent = 'خطا در بارگذاری. صفحه را تازه کنید.'; return; }
   S.cat = c.j; prepCatalog();
   const m = await api('GET', '/api/me');
